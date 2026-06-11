@@ -16,64 +16,56 @@ from app.services.graph_store import GraphStore
 from app.services.compiler import WikiCompiler
 from app.services.embedding import get_embedding_service
 from app.services.qdrant_sync import QdrantSyncManager
+from app.core.redis import get_redis_client
 
-def main():
-    parser = argparse.ArgumentParser(description="Ingest documentation into the Knowledge Graph and Wiki.")
-    parser.add_argument(
-        "--source",
-        choices=["local", "github", "confluence"],
-        required=True,
-        help="The source type to ingest from.",
-    )
-    # Source-specific arguments
-    parser.add_argument("--dir", help="Directory path (required for local source).")
-    parser.add_argument("--repo", help="Repository path 'owner/repo' (required for github source).")
-    parser.add_argument("--space", help="Confluence space key (required for confluence source).")
-
-    args = parser.parse_args()
-
+def run_ingest_pipeline(
+    source: str,
+    dir_path: str = None,
+    repo_name: str = None,
+    space_key: str = None
+) -> dict:
+    """
+    Core ingestion pipeline logic refactored into a reusable function.
+    Can be run from command line or called inside background threads.
+    """
     # Load environment variables
     load_dotenv()
     api_key = os.getenv("GOOGLE_API_KEY")
     if not api_key:
-        print("Error: GOOGLE_API_KEY environment variable not found in .env.")
-        sys.exit(1)
+        raise ValueError("GOOGLE_API_KEY environment variable not found in .env.")
 
     # 1. Initialize the correct connector
     connector = None
-    if args.source == "local":
-        if not args.dir:
-            print("Error: --dir is required for local source.")
-            sys.exit(1)
-        connector = LocalFilesConnector(directory_path=args.dir)
-    elif args.source == "github":
-        if not args.repo:
-            print("Error: --repo is required for github source.")
-            sys.exit(1)
+    if source == "local":
+        if not dir_path:
+            raise ValueError("--dir is required for local source.")
+        connector = LocalFilesConnector(directory_path=dir_path)
+    elif source == "github":
+        if not repo_name:
+            raise ValueError("--repo is required for github source.")
         token = os.getenv("GITHUB_TOKEN")
         if not token:
-            print("Error: GITHUB_TOKEN environment variable not found in .env.")
-            sys.exit(1)
-        connector = GitHubConnector(token=token, repo_name=args.repo)
-    elif args.source == "confluence":
-        if not args.space:
-            print("Error: --space is required for confluence source.")
-            sys.exit(1)
+            raise ValueError("GITHUB_TOKEN environment variable not found in .env.")
+        connector = GitHubConnector(token=token, repo_name=repo_name)
+    elif source == "confluence":
+        if not space_key:
+            raise ValueError("--space is required for confluence source.")
         url = os.getenv("CONFLUENCE_URL")
         username = os.getenv("CONFLUENCE_USERNAME")
         token = os.getenv("CONFLUENCE_API_TOKEN")
         if not url or not username or not token:
-            print("Error: CONFLUENCE_URL, CONFLUENCE_USERNAME, and CONFLUENCE_API_TOKEN must be set in .env.")
-            sys.exit(1)
-        connector = ConfluenceConnector(url=url, username=username, token=token, space_key=args.space)
+            raise ValueError("CONFLUENCE_URL, CONFLUENCE_USERNAME, and CONFLUENCE_API_TOKEN must be set in .env.")
+        connector = ConfluenceConnector(url=url, username=username, token=token, space_key=space_key)
+    else:
+        raise ValueError(f"Unsupported source type: {source}")
 
     # 2. Fetch documents
-    print(f"Fetching documents from {args.source}...")
+    print(f"Fetching documents from {source}...")
     documents = connector.fetch_documents()
     print(f"Fetched {len(documents)} document(s).")
     if not documents:
         print("No documents found. Exiting.")
-        return
+        return {"status": "success", "summary": "No documents found to ingest."}
 
     # 3. Filter using StateManager for incremental sync
     state_manager = StateManager()
@@ -87,11 +79,11 @@ def main():
 
     if not modified_docs:
         print("All documents are up-to-date. Ingestion skipped.")
-        return
+        return {"status": "success", "summary": "All documents are up-to-date. Ingestion skipped."}
 
     print(f"Processing {len(modified_docs)} new/modified document(s)...")
 
-    # 4. Initialize local embedding and Qdrant sync (lazy loaded to prevent model load on skipped runs)
+    # 4. Initialize embedding and Qdrant sync
     embedding_service = None
     qdrant_manager = None
     
@@ -188,6 +180,14 @@ def main():
     graph_store.save()
     state_manager.save()
     
+    # Invalidate Redis wiki cache so next search is loaded with updated files
+    try:
+        r = get_redis_client()
+        r.delete("wiki:cache")
+        print("Invalidated wiki cache in Redis.")
+    except Exception as e:
+        print(f"Failed to invalidate wiki cache in Redis: {e}")
+    
     # Programmatic Index Page Generation
     wiki_compiler.generate_index_page()
 
@@ -206,7 +206,35 @@ def main():
         new_log = "\n".join(log_entries)
         f.write(f"# Ingestion Log\n\n{new_log}\n\n{existing_log}".strip())
 
+    summary_msg = f"Successfully ingested {len(modified_docs)} document(s). Extracted {len(all_extracted_entities)} entities."
     print("Ingestion run completed successfully!")
+    return {"status": "success", "summary": summary_msg}
+
+def main():
+    parser = argparse.ArgumentParser(description="Ingest documentation into the Knowledge Graph and Wiki.")
+    parser.add_argument(
+        "--source",
+        choices=["local", "github", "confluence"],
+        required=True,
+        help="The source type to ingest from.",
+    )
+    # Source-specific arguments
+    parser.add_argument("--dir", help="Directory path (required for local source).")
+    parser.add_argument("--repo", help="Repository path 'owner/repo' (required for github source).")
+    parser.add_argument("--space", help="Confluence space key (required for confluence source).")
+
+    args = parser.parse_args()
+
+    try:
+        run_ingest_pipeline(
+            source=args.source,
+            dir_path=args.dir,
+            repo_name=args.repo,
+            space_key=args.space
+        )
+    except Exception as e:
+        print(f"Error running ingestion: {e}")
+        sys.exit(1)
 
 if __name__ == "__main__":
     main()

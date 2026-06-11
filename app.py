@@ -1,8 +1,10 @@
-# app.py
+import os
+import re
 import chainlit as cl
 import logging
+import httpx
+import json
 from typing import Optional
-from app.agent import create_conversational_agent
 from fastapi import Request, Response
 
 logger = logging.getLogger(__name__)
@@ -10,15 +12,12 @@ logger = logging.getLogger(__name__)
 @cl.password_auth_callback
 def auth_callback(username: str, password: str) -> Optional[cl.User]:
     """Password auth handler for login"""
-    
-    if (username, password) == ("admin", "admin"): #For development
+    if (username, password) == ("admin", "admin"):
         return cl.User(identifier="admin", metadata={"role": "ADMIN"})
-    else: 
-        return None
-    
+    return None
+
 @cl.on_logout
 def on_logout(request: Request, response: Response):
-    ### Handler to tidy up resources
     for cookie_name in request.cookies.keys():
         response.delete_cookie(cookie_name)
 
@@ -26,64 +25,139 @@ def on_logout(request: Request, response: Response):
 async def set_chat_starters():
     return [
         cl.Starter(
-            label="Hỏi giờ",
-            message="Bây giờ là mấy giờ?",
+            label="Tra cứu wiki",
+            message="Tìm kiếm thông tin về qmd và các tính năng chính của nó",
         ),
         cl.Starter(
-            label="Tìm kiếm",
-            message="Tìm kiếm thông tin về Gemini CLI",
+            label="Xem kết nối dịch vụ",
+            message="Giải thích các mối quan hệ và dependencies xung quanh auth-service",
+        ),
+        cl.Starter(
+            label="Kiểm tra chất lượng Wiki",
+            message="Hãy chạy kiểm tra sức khỏe (lint) của wiki hiện tại",
         ),
     ]
 
-
 @cl.on_chat_start
 async def start():
-    # Now we can see who's starting the conversation!
     user = cl.user_session.get("user")
-    logger.info(f"{user.identifier} has started the conversation")
-    # Initialize the agent for this session
-    agent_executor = create_conversational_agent(temperature=0.0)
-    cl.user_session.set("agent", agent_executor)
+    logger.info(f"{user.identifier if user else 'Guest'} has started the conversation")
     cl.user_session.set("chat_history", [])
-
-    # await cl.Message(content="Chào bạn! Tôi là trợ lý AI. Bạn muốn hỏi gì hôm nay?").send()
 
 @cl.on_chat_end
 def on_chat_end():
     user = cl.user_session.get("user")
-    logger.info(f"{user.identifier} has ended the chat")
+    logger.info(f"{user.identifier if user else 'Guest'} has ended the chat")
 
+def resolve_citations(text: str) -> str:
+    """
+    Parses references like [Nguồn: wiki/services/auth-service.md] in the text,
+    reads the front matter of the cited file, and replaces it with its original
+    clickable source URL (e.g. Confluence/GitHub link).
+    """
+    # Pattern to match [Nguồn: wiki/...] or [Nguồn: wiki\...]
+    pattern = r'\[Nguồn:\s*(wiki/[^\]]+)\]'
+    matches = re.findall(pattern, text)
     
-@cl.on_settings_update
-async def setup_agent(settings):
-    # Re-initialize agent with new temperature
-    agent_executor = create_conversational_agent(temperature=settings["Temperature"])
-    cl.user_session.set("agent", agent_executor)
-    await cl.Message(content=f"Đã cập nhật nhiệt độ sang {settings['Temperature']}").send()
+    for rel_path in matches:
+        # Resolve path to local workspace file
+        abs_path = os.path.abspath(rel_path)
+        if os.path.exists(abs_path):
+            try:
+                with open(abs_path, "r", encoding="utf-8") as f:
+                    content = f.read()
+                
+                # Parse front matter for source_docs: [...]
+                source_url = None
+                if content.startswith("---"):
+                    parts = content.split("---", 2)
+                    if len(parts) >= 3:
+                        yaml_text = parts[1]
+                        doc_match = re.search(r'source_docs:\s*\[(.*?)\]', yaml_text)
+                        if doc_match:
+                            urls = [u.strip().strip("'").strip('"') for u in doc_match.group(1).split(",") if u.strip()]
+                            if urls:
+                                source_url = urls[0]
+                
+                if source_url:
+                    basename = os.path.basename(rel_path)
+                    replacement = f"[Nguồn: {basename}]({source_url})"
+                    text = text.replace(f"[Nguồn: {rel_path}]", replacement)
+            except Exception as e:
+                print(f"Error parsing front matter for {rel_path}: {e}")
+                
+    return text
 
 @cl.on_message
 async def on_message(message: cl.Message):
-    # Retrieve the agent and chat history from the session
-    agent = cl.user_session.get("agent")
-    chat_history = cl.user_session.get("chat_history")
+    chat_history = cl.user_session.get("chat_history", [])
+    url = "http://localhost:8000/api/chat"
     
-    # Initialize the Chainlit LangChain callback handler
-    # This automatically shows tool usage and thought process in the UI
-    cb = cl.LangchainCallbackHandler(stream_final_answer=True)
+    # Initialize main message
+    streamed_msg = cl.Message(content="")
+    await streamed_msg.send()
     
-    # Run the agent
-    res = await agent.ainvoke(
-        {"input": message.content, "chat_history": chat_history},
-        config={"callbacks": [cb]}
-    )
+    payload = {
+        "query": message.content,
+        "chat_history": chat_history
+    }
     
-    output = res["output"]
+    # Keep track of active Chainlit steps (tool calls)
+    active_steps = {}
     
-    # Update chat history
-    chat_history.append(("human", message.content))
-    chat_history.append(("ai", output))
-    cl.user_session.set("chat_history", chat_history)
-    
-    # If the final answer wasn't streamed, send it manually
-    if not cb.final_stream:
-        await cl.Message(content=output).send()
+    try:
+        async with httpx.AsyncClient(timeout=90.0) as client:
+            async with client.stream("POST", url, json=payload) as response:
+                if response.status_code != 200:
+                    await streamed_msg.update(content=f"Error from server: HTTP {response.status_code}")
+                    return
+                    
+                async for line in response.aiter_lines():
+                    if line.startswith("data: "):
+                        data_str = line[6:]
+                        try:
+                            data = json.loads(data_str)
+                            dtype = data.get("type")
+                            
+                            if dtype == "step_start":
+                                # 1. Render active tool thinking block
+                                step_name = data.get("name")
+                                step_input = data.get("input")
+                                
+                                step = cl.Step(name=step_name)
+                                step.input = step_input
+                                await step.send()
+                                active_steps[step_name] = step
+                                
+                            elif dtype == "step_end":
+                                # 2. Update and close active thinking block
+                                step_name = list(active_steps.keys())[-1] if active_steps else None
+                                if step_name:
+                                    step = active_steps.pop(step_name)
+                                    step.output = data.get("output", "")
+                                    await step.update()
+                                    
+                            elif dtype == "token":
+                                # 3. Stream text tokens to main message
+                                await streamed_msg.stream_token(data["token"])
+                                
+                            elif dtype == "done":
+                                # 4. Resolve wiki links/citations to clickable remote URLs
+                                final_output = data.get("output", "")
+                                resolved_output = resolve_citations(final_output)
+                                await streamed_msg.update(content=resolved_output)
+                                
+                            elif dtype == "error":
+                                await streamed_msg.stream_token(f"\n[Error: {data['error']}]")
+                                
+                        except Exception as json_err:
+                            print(f"Error parsing chunk: {json_err} for line: {line}")
+                            
+        # Save chat history
+        chat_history.append(("human", message.content))
+        chat_history.append(("ai", streamed_msg.content))
+        cl.user_session.set("chat_history", chat_history)
+        await streamed_msg.update()
+        
+    except Exception as e:
+        await cl.Message(content=f"Error connecting to chat API: {e}. Hãy đảm bảo server FastAPI đang chạy tại localhost:8000.").send()

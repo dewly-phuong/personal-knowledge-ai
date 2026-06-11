@@ -5,9 +5,20 @@ import networkx as nx
 from app.models.graph import Entity, Relation
 
 class GraphStore:
+    _instance = None
+
+    def __new__(cls, *args, **kwargs):
+        if not cls._instance:
+            cls._instance = super(GraphStore, cls).__new__(cls)
+            cls._instance._initialized = False
+        return cls._instance
+
     def __init__(self, file_path: str = "graph/graph.pkl"):
+        if getattr(self, '_initialized', False):
+            return
         self.file_path = file_path
         self.graph = self._load_graph()
+        self._initialized = True
 
     def _load_graph(self) -> nx.MultiDiGraph:
         """Loads NetworkX graph from pickle, or creates a new MultiDiGraph if none exists."""

@@ -230,9 +230,9 @@ __marimo__/
 # Streamlit
 .streamlit/secrets.toml
 
-./raw/local/*
-./wiki/*
-./graph/*
+./raw/local/*.md
+./wiki/*.md
+./graph/*.md
 GEMINI.md
 WORK_HISTORY.md
 brainstorming.skill
