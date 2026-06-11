@@ -1,0 +1,1469 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Personal Knowledge AI - Graph Visualizer</title>
+    <script src="https://d3js.org/d3.v7.min.js"></script>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: #0d1117;
+            color: #c9d1d9;
+            overflow: hidden;
+        }
+        
+        #header {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            z-index: 10;
+            background: rgba(22, 27, 34, 0.85);
+            padding: 15px 25px;
+            border-radius: 12px;
+            border: 1px solid #30363d;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.5);
+            backdrop-filter: blur(8px);
+        }
+        
+        h1 {
+            margin: 0 0 5px 0;
+            font-size: 20px;
+            color: #58a6ff;
+            font-weight: 600;
+        }
+        
+        .subtitle {
+            margin: 0;
+            font-size: 12px;
+            color: #8b949e;
+        }
+        
+        #sidebar {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            width: 300px;
+            z-index: 10;
+            background: rgba(22, 27, 34, 0.85);
+            padding: 20px;
+            border-radius: 12px;
+            border: 1px solid #30363d;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.5);
+            backdrop-filter: blur(8px);
+            max-height: 80vh;
+            overflow-y: auto;
+        }
+        
+        .section-title {
+            font-size: 14px;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            color: #8b949e;
+            border-bottom: 1px solid #21262d;
+            padding-bottom: 5px;
+            margin-top: 0;
+            margin-bottom: 12px;
+        }
+        
+        .node-detail {
+            display: none;
+        }
+        
+        .node-name {
+            font-size: 18px;
+            font-weight: bold;
+            color: #f0f6fc;
+            margin-bottom: 8px;
+        }
+        
+        .node-type {
+            display: inline-block;
+            padding: 3px 8px;
+            border-radius: 20px;
+            font-size: 11px;
+            font-weight: bold;
+            text-transform: uppercase;
+            margin-bottom: 15px;
+        }
+        
+        .type-service { background-color: #388bfd33; color: #58a6ff; border: 1px solid #388bfd66; }
+        .type-pipeline { background-color: #56d36433; color: #3fb950; border: 1px solid #56d36466; }
+        .type-concept { background-color: #bc8cff33; color: #d2a8ff; border: 1px solid #bc8cff66; }
+        .type-person { background-color: #e3b34133; color: #f2cc60; border: 1px solid #e3b34166; }
+        .type-database { background-color: #ff7b7233; color: #ff7b72; border: 1px solid #ff7b7266; }
+        .type-artifact { background-color: #79c0ff33; color: #79c0ff; border: 1px solid #79c0ff66; }
+        
+        .label-text {
+            font-size: 12px;
+            color: #8b949e;
+            margin-bottom: 3px;
+        }
+        
+        .value-text {
+            font-size: 13px;
+            color: #c9d1d9;
+            margin-bottom: 15px;
+            line-height: 1.4;
+        }
+        
+        .pill-list {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 5px;
+            margin-bottom: 15px;
+        }
+        
+        .pill {
+            background: #21262d;
+            border: 1px solid #30363d;
+            border-radius: 4px;
+            padding: 2px 6px;
+            font-size: 11px;
+            color: #8b949e;
+        }
+        
+        .source-link {
+            display: block;
+            font-size: 11px;
+            color: #58a6ff;
+            text-decoration: none;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            margin-bottom: 5px;
+        }
+        
+        .source-link:hover {
+            text-decoration: underline;
+        }
+        
+        svg {
+            width: 100vw;
+            height: 100vh;
+        }
+        
+        .node {
+            stroke-width: 2px;
+            cursor: pointer;
+            transition: stroke-width 0.1s ease;
+        }
+        
+        .node:hover {
+            stroke-width: 4px;
+            stroke: #fff !important;
+        }
+        
+        .link {
+            stroke-opacity: 0.6;
+            stroke-width: 1.5px;
+            fill: none;
+        }
+        
+        .edge-label {
+            fill: #8b949e;
+            font-size: 10px;
+            pointer-events: none;
+        }
+        
+        .node-label {
+            fill: #c9d1d9;
+            font-size: 11px;
+            pointer-events: none;
+            text-shadow: 0 1px 4px rgba(0,0,0,0.8);
+        }
+        
+        /* Legends */
+        #legend {
+            margin-top: 15px;
+        }
+        .legend-item {
+            display: flex;
+            align-items: center;
+            margin-bottom: 6px;
+            font-size: 12px;
+        }
+        .legend-color {
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            margin-right: 8px;
+        }
+    </style>
+</head>
+<body>
+    <div id="header">
+        <h1>Personal Knowledge Graph</h1>
+        <p class="subtitle" id="stats-summary"></p>
+    </div>
+    
+    <div id="sidebar">
+        <div id="empty-state">
+            <h3 class="section-title">Knowledge Graph</h3>
+            <p style="font-size: 13px; color: #8b949e; line-height: 1.5;">
+                Click any node in the graph to view details, dependencies, description, and source links.
+            </p>
+            <div id="legend">
+                <h4 class="section-title" style="margin-top: 20px;">Legend</h4>
+                <div class="legend-item"><div class="legend-color" style="background-color: #58a6ff;"></div>Service</div>
+                <div class="legend-item"><div class="legend-color" style="background-color: #3fb950;"></div>Pipeline</div>
+                <div class="legend-item"><div class="legend-color" style="background-color: #d2a8ff;"></div>Concept</div>
+                <div class="legend-item"><div class="legend-color" style="background-color: #ff7b72;"></div>Database</div>
+                <div class="legend-item"><div class="legend-color" style="background-color: #79c0ff;"></div>Artifact</div>
+                <div class="legend-item"><div class="legend-color" style="background-color: #f2cc60;"></div>Person</div>
+            </div>
+        </div>
+        
+        <div id="detail-pane" class="node-detail">
+            <div class="node-name" id="det-name">canonical-entity</div>
+            <div class="node-type" id="det-type">concept</div>
+            
+            <div class="label-text">Description</div>
+            <div class="value-text" id="det-desc">No description available.</div>
+            
+            <div class="label-text">Aliases</div>
+            <div class="pill-list" id="det-aliases"></div>
+            
+            <div class="label-text">Source Documents</div>
+            <div id="det-docs"></div>
+        </div>
+    </div>
+    
+    <svg id="viz"></svg>
+    
+    <script>
+        const data = {
+  "nodes": [
+    {
+      "id": "Payment Processing Pipeline",
+      "type": "PIPELINE",
+      "description": "The Payment Processing Pipeline is a scheduled cron job that runs every hour, processing pending transactions and sending transaction receipts. / A scheduled cron job that runs every hour to process pending transactions and send transaction receipts.",
+      "aliases": [
+        "Payment Processing Pipeline"
+      ],
+      "source_docs": [
+        "file:///home/phun/workspace/dewly/python/personal-knowledge-ai/test/gold_set/payment_pipeline.md"
+      ]
+    },
+    {
+      "id": "Auth Service",
+      "type": "SERVICE",
+      "description": "The Auth Service is responsible for authenticating payment requests. / The Auth Service handles user authentication and session management. / A service that authenticates payment requests for the Payment Processing Pipeline. / The Auth Service handles user authentication and session management.",
+      "aliases": [
+        "Auth Service"
+      ],
+      "source_docs": [
+        "file:///home/phun/workspace/dewly/python/personal-knowledge-ai/test/gold_set/payment_pipeline.md",
+        "file:///home/phun/workspace/dewly/python/personal-knowledge-ai/test/gold_set/auth_service.md"
+      ]
+    },
+    {
+      "id": "Finance Service",
+      "type": "SERVICE",
+      "description": "The Finance Service operates the Payment Processing Pipeline. / A service that operates the Payment Processing Pipeline.",
+      "aliases": [
+        "Finance Service"
+      ],
+      "source_docs": [
+        "file:///home/phun/workspace/dewly/python/personal-knowledge-ai/test/gold_set/payment_pipeline.md"
+      ]
+    },
+    {
+      "id": "Platform Team",
+      "type": "ORGANIZATION",
+      "description": "The Platform Team is the organizational entity that owns the Auth Service. / The Platform Team owns the Auth Service.",
+      "aliases": [
+        "Platform Team"
+      ],
+      "source_docs": [
+        "file:///home/phun/workspace/dewly/python/personal-knowledge-ai/test/gold_set/auth_service.md"
+      ]
+    },
+    {
+      "id": "User Database",
+      "type": "DATABASE",
+      "description": "The User Database is a PostgreSQL database used by the Auth Service to retrieve user profiles.",
+      "aliases": [
+        "User Database"
+      ],
+      "source_docs": [
+        "file:///home/phun/workspace/dewly/python/personal-knowledge-ai/test/gold_set/auth_service.md"
+      ]
+    },
+    {
+      "id": "Redis",
+      "type": "DATABASE",
+      "description": "Redis is used by the Auth Service for token caching.",
+      "aliases": [
+        "Redis"
+      ],
+      "source_docs": [
+        "file:///home/phun/workspace/dewly/python/personal-knowledge-ai/test/gold_set/auth_service.md"
+      ]
+    },
+    {
+      "id": "REST APIs",
+      "type": "CONCEPT",
+      "description": "REST APIs are exposed by the Auth Service for login and token verification.",
+      "aliases": [
+        "REST APIs"
+      ],
+      "source_docs": [
+        "file:///home/phun/workspace/dewly/python/personal-knowledge-ai/test/gold_set/auth_service.md"
+      ]
+    },
+    {
+      "id": "LLM Wiki",
+      "type": "CONCEPT",
+      "description": "A pattern for building personal knowledge bases using Large Language Models by incrementally building and maintaining a persistent wiki.",
+      "aliases": [
+        "LLM Wiki"
+      ],
+      "source_docs": [
+        "file:///home/phun/workspace/dewly/python/personal-knowledge-ai/raw/local/llm-wiki.md"
+      ]
+    },
+    {
+      "id": "LLM Agent",
+      "type": "SERVICE",
+      "description": "An AI agent responsible for building, maintaining, and updating The Wiki based on user input and new sources.",
+      "aliases": [
+        "LLM Agent"
+      ],
+      "source_docs": [
+        "file:///home/phun/workspace/dewly/python/personal-knowledge-ai/raw/local/llm-wiki.md"
+      ]
+    },
+    {
+      "id": "Retrieval Augmented Generation",
+      "type": "CONCEPT",
+      "description": "A common approach where an LLM retrieves relevant chunks from raw documents at query time and generates an answer, without accumulating knowledge.",
+      "aliases": [
+        "RAG (Retrieval Augmented Generation)"
+      ],
+      "source_docs": [
+        "file:///home/phun/workspace/dewly/python/personal-knowledge-ai/raw/local/llm-wiki.md"
+      ]
+    },
+    {
+      "id": "Raw Sources",
+      "type": "ARTIFACT",
+      "description": "A curated collection of immutable source documents like articles, papers, images, and data files, which the LLM Agent reads from.",
+      "aliases": [
+        "Raw Sources"
+      ],
+      "source_docs": [
+        "file:///home/phun/workspace/dewly/python/personal-knowledge-ai/raw/local/llm-wiki.md"
+      ]
+    },
+    {
+      "id": "The Wiki",
+      "type": "ARTIFACT",
+      "description": "A directory of LLM Agent-generated markdown files that is a persistent, compounding artifact of compiled and current knowledge.",
+      "aliases": [
+        "The Wiki"
+      ],
+      "source_docs": [
+        "file:///home/phun/workspace/dewly/python/personal-knowledge-ai/raw/local/llm-wiki.md"
+      ]
+    },
+    {
+      "id": "The Schema",
+      "type": "ARTIFACT",
+      "description": "A configuration document that tells the LLM Agent how The Wiki is structured, its conventions, and workflows.",
+      "aliases": [
+        "The Schema"
+      ],
+      "source_docs": [
+        "file:///home/phun/workspace/dewly/python/personal-knowledge-ai/raw/local/llm-wiki.md"
+      ]
+    },
+    {
+      "id": "Ingest",
+      "type": "PIPELINE",
+      "description": "An operation where the LLM Agent processes new Raw Sources, extracts key information, and integrates it into The Wiki.",
+      "aliases": [
+        "Ingest"
+      ],
+      "source_docs": [
+        "file:///home/phun/workspace/dewly/python/personal-knowledge-ai/raw/local/llm-wiki.md"
+      ]
+    },
+    {
+      "id": "Query",
+      "type": "PIPELINE",
+      "description": "An operation where the LLM Agent searches The Wiki for relevant pages to synthesize answers to user questions.",
+      "aliases": [
+        "Query"
+      ],
+      "source_docs": [
+        "file:///home/phun/workspace/dewly/python/personal-knowledge-ai/raw/local/llm-wiki.md"
+      ]
+    },
+    {
+      "id": "Lint",
+      "type": "PIPELINE",
+      "description": "A periodic operation where the LLM Agent health-checks The Wiki for inconsistencies, outdated information, and missing connections.",
+      "aliases": [
+        "Lint"
+      ],
+      "source_docs": [
+        "file:///home/phun/workspace/dewly/python/personal-knowledge-ai/raw/local/llm-wiki.md"
+      ]
+    },
+    {
+      "id": "index.md",
+      "type": "ARTIFACT",
+      "description": "A content-oriented markdown file within The Wiki that catalogs all wiki pages with links and summaries, updated on every Ingest.",
+      "aliases": [
+        "index.md"
+      ],
+      "source_docs": [
+        "file:///home/phun/workspace/dewly/python/personal-knowledge-ai/raw/local/llm-wiki.md"
+      ]
+    },
+    {
+      "id": "log.md",
+      "type": "ARTIFACT",
+      "description": "A chronological, append-only record within The Wiki of all operations like ingests, queries, and lint passes.",
+      "aliases": [
+        "log.md"
+      ],
+      "source_docs": [
+        "file:///home/phun/workspace/dewly/python/personal-knowledge-ai/raw/local/llm-wiki.md"
+      ]
+    },
+    {
+      "id": "Obsidian",
+      "type": "CONCEPT",
+      "description": "A markdown knowledge base tool used by the human as an IDE to browse and visualize The Wiki.",
+      "aliases": [
+        "Obsidian"
+      ],
+      "source_docs": [
+        "file:///home/phun/workspace/dewly/python/personal-knowledge-ai/raw/local/llm-wiki.md"
+      ]
+    },
+    {
+      "id": "Obsidian Web Clipper",
+      "type": "SERVICE",
+      "description": "A browser extension that converts web articles to markdown, facilitating the addition of Raw Sources.",
+      "aliases": [
+        "Obsidian Web Clipper"
+      ],
+      "source_docs": [
+        "file:///home/phun/workspace/dewly/python/personal-knowledge-ai/raw/local/llm-wiki.md"
+      ]
+    },
+    {
+      "id": "qmd",
+      "type": "SERVICE",
+      "description": "A local search engine for markdown files with hybrid BM25/vector search and LLM re-ranking, usable by the LLM Agent.",
+      "aliases": [
+        "qmd"
+      ],
+      "source_docs": [
+        "file:///home/phun/workspace/dewly/python/personal-knowledge-ai/raw/local/llm-wiki.md"
+      ]
+    },
+    {
+      "id": "Marp",
+      "type": "ARTIFACT",
+      "description": "A markdown-based slide deck format and Obsidian plugin, useful for generating presentations directly from The Wiki content.",
+      "aliases": [
+        "Marp"
+      ],
+      "source_docs": [
+        "file:///home/phun/workspace/dewly/python/personal-knowledge-ai/raw/local/llm-wiki.md"
+      ]
+    },
+    {
+      "id": "Dataview",
+      "type": "SERVICE",
+      "description": "An Obsidian plugin that runs queries over page frontmatter in The Wiki to generate dynamic tables and lists.",
+      "aliases": [
+        "Dataview"
+      ],
+      "source_docs": [
+        "file:///home/phun/workspace/dewly/python/personal-knowledge-ai/raw/local/llm-wiki.md"
+      ]
+    },
+    {
+      "id": "Memex",
+      "type": "CONCEPT",
+      "description": "A concept envisioned by Vannevar Bush for a personal, curated knowledge store with associative trails, related to the LLM Wiki idea.",
+      "aliases": [
+        "Memex"
+      ],
+      "source_docs": [
+        "file:///home/phun/workspace/dewly/python/personal-knowledge-ai/raw/local/llm-wiki.md"
+      ]
+    },
+    {
+      "id": "Vannevar Bush",
+      "type": "PERSON",
+      "description": "The person who, in 1945, conceived of the Memex, a vision related in spirit to the LLM Wiki.",
+      "aliases": [
+        "Vannevar Bush"
+      ],
+      "source_docs": [
+        "file:///home/phun/workspace/dewly/python/personal-knowledge-ai/raw/local/llm-wiki.md"
+      ]
+    },
+    {
+      "id": "QMD",
+      "type": "SERVICE",
+      "description": "An on-device search engine designed to index and search markdown notes, meeting transcripts, documentation, and knowledge bases.",
+      "aliases": [
+        "QMD"
+      ],
+      "source_docs": [
+        "file:///home/phun/workspace/dewly/python/personal-knowledge-ai/raw/local/qmd.md"
+      ]
+    },
+    {
+      "id": "BM25 Full-Text Search",
+      "type": "CONCEPT",
+      "description": "A traditional keyword-based search technique that QMD utilizes within its search pipeline.",
+      "aliases": [
+        "BM25 Full-Text Search"
+      ],
+      "source_docs": [
+        "file:///home/phun/workspace/dewly/python/personal-knowledge-ai/raw/local/qmd.md"
+      ]
+    },
+    {
+      "id": "Vector Semantic Search",
+      "type": "CONCEPT",
+      "description": "A search technique based on vector embeddings for finding semantically similar documents, integrated into QMD.",
+      "aliases": [
+        "Vector Semantic Search"
+      ],
+      "source_docs": [
+        "file:///home/phun/workspace/dewly/python/personal-knowledge-ai/raw/local/qmd.md"
+      ]
+    },
+    {
+      "id": "LLM Re-ranking",
+      "type": "CONCEPT",
+      "description": "A process in QMD that uses large language models to re-evaluate and reorder search results to improve relevance.",
+      "aliases": [
+        "LLM Re-ranking"
+      ],
+      "source_docs": [
+        "file:///home/phun/workspace/dewly/python/personal-knowledge-ai/raw/local/qmd.md"
+      ]
+    },
+    {
+      "id": "Node-llama-cpp",
+      "type": "ARTIFACT",
+      "description": "A library that QMD uses to run GGUF-formatted LLM models locally for various tasks.",
+      "aliases": [
+        "Node-llama-cpp"
+      ],
+      "source_docs": [
+        "file:///home/phun/workspace/dewly/python/personal-knowledge-ai/raw/local/qmd.md"
+      ]
+    },
+    {
+      "id": "GGUF Models",
+      "type": "ARTIFACT",
+      "description": "A specific format for quantized large language models that node-llama-cpp uses within QMD.",
+      "aliases": [
+        "GGUF Models"
+      ],
+      "source_docs": [
+        "file:///home/phun/workspace/dewly/python/personal-knowledge-ai/raw/local/qmd.md"
+      ]
+    },
+    {
+      "id": "MCP Server",
+      "type": "SERVICE",
+      "description": "A Model Context Protocol server provided by QMD for tighter integration with external AI agents.",
+      "aliases": [
+        "MCP Server"
+      ],
+      "source_docs": [
+        "file:///home/phun/workspace/dewly/python/personal-knowledge-ai/raw/local/qmd.md"
+      ]
+    },
+    {
+      "id": "Claude Desktop",
+      "type": "SERVICE",
+      "description": "A desktop application that can be configured to communicate with QMD's MCP Server.",
+      "aliases": [
+        "Claude Desktop"
+      ],
+      "source_docs": [
+        "file:///home/phun/workspace/dewly/python/personal-knowledge-ai/raw/local/qmd.md"
+      ]
+    },
+    {
+      "id": "Claude Code",
+      "type": "SERVICE",
+      "description": "An application that can be extended with a QMD plugin for direct interaction with QMD's MCP Server.",
+      "aliases": [
+        "Claude Code"
+      ],
+      "source_docs": [
+        "file:///home/phun/workspace/dewly/python/personal-knowledge-ai/raw/local/qmd.md"
+      ]
+    },
+    {
+      "id": "HTTP Transport",
+      "type": "CONCEPT",
+      "description": "An alternative communication mechanism for QMD's MCP Server, enabling a long-lived, shared server instance.",
+      "aliases": [
+        "HTTP Transport"
+      ],
+      "source_docs": [
+        "file:///home/phun/workspace/dewly/python/personal-knowledge-ai/raw/local/qmd.md"
+      ]
+    },
+    {
+      "id": "QMD SDK",
+      "type": "ARTIFACT",
+      "description": "A JavaScript/TypeScript library allowing developers to embed QMD's functionalities into their own Node.js or Bun applications.",
+      "aliases": [
+        "QMD SDK"
+      ],
+      "source_docs": [
+        "file:///home/phun/workspace/dewly/python/personal-knowledge-ai/raw/local/qmd.md"
+      ]
+    },
+    {
+      "id": "Reciprocal Rank Fusion (RRF)",
+      "type": "CONCEPT",
+      "description": "A method used by QMD to combine and fuse ranked lists of search results from multiple sources.",
+      "aliases": [
+        "Reciprocal Rank Fusion (RRF)"
+      ],
+      "source_docs": [
+        "file:///home/phun/workspace/dewly/python/personal-knowledge-ai/raw/local/qmd.md"
+      ]
+    },
+    {
+      "id": "FTS Backend",
+      "type": "CONCEPT",
+      "description": "The specific backend component within QMD responsible for performing full-text search operations using SQLite FTS5.",
+      "aliases": [
+        "FTS Backend"
+      ],
+      "source_docs": [
+        "file:///home/phun/workspace/dewly/python/personal-knowledge-ai/raw/local/qmd.md"
+      ]
+    },
+    {
+      "id": "Vector Backend",
+      "type": "CONCEPT",
+      "description": "The specific backend component within QMD responsible for performing vector similarity searches.",
+      "aliases": [
+        "Vector Backend"
+      ],
+      "source_docs": [
+        "file:///home/phun/workspace/dewly/python/personal-knowledge-ai/raw/local/qmd.md"
+      ]
+    },
+    {
+      "id": "Reranker Backend",
+      "type": "CONCEPT",
+      "description": "The specific backend component within QMD responsible for applying LLM-based re-ranking to search candidates.",
+      "aliases": [
+        "Reranker Backend"
+      ],
+      "source_docs": [
+        "file:///home/phun/workspace/dewly/python/personal-knowledge-ai/raw/local/qmd.md"
+      ]
+    },
+    {
+      "id": "EmbeddingGemma-300M-Q8_0",
+      "type": "ARTIFACT",
+      "description": "The default GGUF model QMD employs for generating document and query embeddings.",
+      "aliases": [
+        "EmbeddingGemma-300M-Q8_0"
+      ],
+      "source_docs": [
+        "file:///home/phun/workspace/dewly/python/personal-knowledge-ai/raw/local/qmd.md"
+      ]
+    },
+    {
+      "id": "Qwen3-Reranker-0.6B-Q8_0",
+      "type": "ARTIFACT",
+      "description": "The default GGUF model utilized by QMD for its LLM re-ranking functionality.",
+      "aliases": [
+        "Qwen3-Reranker-0.6B-Q8_0"
+      ],
+      "source_docs": [
+        "file:///home/phun/workspace/dewly/python/personal-knowledge-ai/raw/local/qmd.md"
+      ]
+    },
+    {
+      "id": "QMD-Query-Expansion-1.7B-Q4_K_M",
+      "type": "ARTIFACT",
+      "description": "The default GGUF model QMD uses for expanding user queries into multiple variations.",
+      "aliases": [
+        "QMD-Query-Expansion-1.7B-Q4_K_M"
+      ],
+      "source_docs": [
+        "file:///home/phun/workspace/dewly/python/personal-knowledge-ai/raw/local/qmd.md"
+      ]
+    },
+    {
+      "id": "SQLite-vec",
+      "type": "ARTIFACT",
+      "description": "A SQLite extension that QMD uses to manage and index vector embeddings efficiently.",
+      "aliases": [
+        "SQLite-vec"
+      ],
+      "source_docs": [
+        "file:///home/phun/workspace/dewly/python/personal-knowledge-ai/raw/local/qmd.md"
+      ]
+    },
+    {
+      "id": "Tree-sitter",
+      "type": "ARTIFACT",
+      "description": "A parsing library used by QMD to enable AST-aware chunking for code files.",
+      "aliases": [
+        "Tree-sitter"
+      ],
+      "source_docs": [
+        "file:///home/phun/workspace/dewly/python/personal-knowledge-ai/raw/local/qmd.md"
+      ]
+    },
+    {
+      "id": "Node.js",
+      "type": "CONCEPT",
+      "description": "A popular JavaScript runtime environment that is a system requirement for QMD.",
+      "aliases": [
+        "Node.js"
+      ],
+      "source_docs": [
+        "file:///home/phun/workspace/dewly/python/personal-knowledge-ai/raw/local/qmd.md"
+      ]
+    },
+    {
+      "id": "Bun",
+      "type": "CONCEPT",
+      "description": "A fast, all-in-one JavaScript runtime that QMD can also run on.",
+      "aliases": [
+        "Bun"
+      ],
+      "source_docs": [
+        "file:///home/phun/workspace/dewly/python/personal-knowledge-ai/raw/local/qmd.md"
+      ]
+    },
+    {
+      "id": "SQLite",
+      "type": "DATABASE",
+      "description": "The embedded relational database system used by QMD to persist its entire index and metadata.",
+      "aliases": [
+        "SQLite"
+      ],
+      "source_docs": [
+        "file:///home/phun/workspace/dewly/python/personal-knowledge-ai/raw/local/qmd.md"
+      ]
+    },
+    {
+      "id": "FTS5 Index",
+      "type": "DATABASE",
+      "description": "A specific full-text search index within the SQLite database that QMD uses for keyword lookups.",
+      "aliases": [
+        "FTS5 Index"
+      ],
+      "source_docs": [
+        "file:///home/phun/workspace/dewly/python/personal-knowledge-ai/raw/local/qmd.md"
+      ]
+    },
+    {
+      "id": "Vectors Vec Index",
+      "type": "DATABASE",
+      "description": "A vector index stored in the SQLite database, powered by SQLite-vec, for semantic search.",
+      "aliases": [
+        "Vectors Vec Index"
+      ],
+      "source_docs": [
+        "file:///home/phun/workspace/dewly/python/personal-knowledge-ai/raw/local/qmd.md"
+      ]
+    },
+    {
+      "id": "QMD Store",
+      "type": "CONCEPT",
+      "description": "The central object in the QMD SDK that encapsulates the search engine's state and operations.",
+      "aliases": [
+        "QMD Store"
+      ],
+      "source_docs": [
+        "file:///home/phun/workspace/dewly/python/personal-knowledge-ai/raw/local/qmd.md"
+      ]
+    },
+    {
+      "id": "Query Expansion",
+      "type": "CONCEPT",
+      "description": "An initial step in QMD's hybrid search where an LLM generates additional queries from the original user input.",
+      "aliases": [
+        "Query Expansion"
+      ],
+      "source_docs": [
+        "file:///home/phun/workspace/dewly/python/personal-knowledge-ai/raw/local/qmd.md"
+      ]
+    },
+    {
+      "id": "Smart Chunking",
+      "type": "CONCEPT",
+      "description": "An intelligent algorithm QMD uses to break down documents into semantically coherent chunks for embedding.",
+      "aliases": [
+        "Smart Chunking"
+      ],
+      "source_docs": [
+        "file:///home/phun/workspace/dewly/python/personal-knowledge-ai/raw/local/qmd.md"
+      ]
+    },
+    {
+      "id": "AST-Aware Chunking",
+      "type": "CONCEPT",
+      "description": "A specialized chunking strategy within QMD that uses Abstract Syntax Trees for structured code file processing.",
+      "aliases": [
+        "AST-Aware Chunking"
+      ],
+      "source_docs": [
+        "file:///home/phun/workspace/dewly/python/personal-knowledge-ai/raw/local/qmd.md"
+      ]
+    }
+  ],
+  "links": [
+    {
+      "source": "Payment Processing Pipeline",
+      "target": "Auth Service",
+      "predicate": "depends on",
+      "source_doc": "file:///home/phun/workspace/dewly/python/personal-knowledge-ai/test/gold_set/payment_pipeline.md"
+    },
+    {
+      "source": "Auth Service",
+      "target": "Platform Team",
+      "predicate": "owned by",
+      "source_doc": "file:///home/phun/workspace/dewly/python/personal-knowledge-ai/test/gold_set/auth_service.md"
+    },
+    {
+      "source": "Auth Service",
+      "target": "User Database",
+      "predicate": "relies on",
+      "source_doc": "file:///home/phun/workspace/dewly/python/personal-knowledge-ai/test/gold_set/auth_service.md"
+    },
+    {
+      "source": "Auth Service",
+      "target": "Redis",
+      "predicate": "depends on",
+      "source_doc": "file:///home/phun/workspace/dewly/python/personal-knowledge-ai/test/gold_set/auth_service.md"
+    },
+    {
+      "source": "Auth Service",
+      "target": "REST APIs",
+      "predicate": "exposes",
+      "source_doc": "file:///home/phun/workspace/dewly/python/personal-knowledge-ai/test/gold_set/auth_service.md"
+    },
+    {
+      "source": "Finance Service",
+      "target": "Payment Processing Pipeline",
+      "predicate": "operates",
+      "source_doc": "file:///home/phun/workspace/dewly/python/personal-knowledge-ai/test/gold_set/payment_pipeline.md"
+    },
+    {
+      "source": "LLM Wiki",
+      "target": "LLM Agent",
+      "predicate": "uses",
+      "source_doc": "file:///home/phun/workspace/dewly/python/personal-knowledge-ai/raw/local/llm-wiki.md"
+    },
+    {
+      "source": "LLM Wiki",
+      "target": "Retrieval Augmented Generation",
+      "predicate": "contrasts with",
+      "source_doc": "file:///home/phun/workspace/dewly/python/personal-knowledge-ai/raw/local/llm-wiki.md"
+    },
+    {
+      "source": "LLM Wiki",
+      "target": "Raw Sources",
+      "predicate": "has layer",
+      "source_doc": "file:///home/phun/workspace/dewly/python/personal-knowledge-ai/raw/local/llm-wiki.md"
+    },
+    {
+      "source": "LLM Wiki",
+      "target": "The Wiki",
+      "predicate": "has layer",
+      "source_doc": "file:///home/phun/workspace/dewly/python/personal-knowledge-ai/raw/local/llm-wiki.md"
+    },
+    {
+      "source": "LLM Wiki",
+      "target": "The Schema",
+      "predicate": "has layer",
+      "source_doc": "file:///home/phun/workspace/dewly/python/personal-knowledge-ai/raw/local/llm-wiki.md"
+    },
+    {
+      "source": "LLM Wiki",
+      "target": "Memex",
+      "predicate": "is related to",
+      "source_doc": "file:///home/phun/workspace/dewly/python/personal-knowledge-ai/raw/local/llm-wiki.md"
+    },
+    {
+      "source": "LLM Agent",
+      "target": "Raw Sources",
+      "predicate": "reads from",
+      "source_doc": "file:///home/phun/workspace/dewly/python/personal-knowledge-ai/raw/local/llm-wiki.md"
+    },
+    {
+      "source": "LLM Agent",
+      "target": "The Wiki",
+      "predicate": "builds and maintains",
+      "source_doc": "file:///home/phun/workspace/dewly/python/personal-knowledge-ai/raw/local/llm-wiki.md"
+    },
+    {
+      "source": "LLM Agent",
+      "target": "The Schema",
+      "predicate": "uses",
+      "source_doc": "file:///home/phun/workspace/dewly/python/personal-knowledge-ai/raw/local/llm-wiki.md"
+    },
+    {
+      "source": "LLM Agent",
+      "target": "Ingest",
+      "predicate": "performs",
+      "source_doc": "file:///home/phun/workspace/dewly/python/personal-knowledge-ai/raw/local/llm-wiki.md"
+    },
+    {
+      "source": "LLM Agent",
+      "target": "Query",
+      "predicate": "performs",
+      "source_doc": "file:///home/phun/workspace/dewly/python/personal-knowledge-ai/raw/local/llm-wiki.md"
+    },
+    {
+      "source": "LLM Agent",
+      "target": "Lint",
+      "predicate": "performs",
+      "source_doc": "file:///home/phun/workspace/dewly/python/personal-knowledge-ai/raw/local/llm-wiki.md"
+    },
+    {
+      "source": "LLM Agent",
+      "target": "qmd",
+      "predicate": "can use",
+      "source_doc": "file:///home/phun/workspace/dewly/python/personal-knowledge-ai/raw/local/llm-wiki.md"
+    },
+    {
+      "source": "Raw Sources",
+      "target": "Obsidian Web Clipper",
+      "predicate": "can be provided by",
+      "source_doc": "file:///home/phun/workspace/dewly/python/personal-knowledge-ai/raw/local/llm-wiki.md"
+    },
+    {
+      "source": "The Wiki",
+      "target": "index.md",
+      "predicate": "contains",
+      "source_doc": "file:///home/phun/workspace/dewly/python/personal-knowledge-ai/raw/local/llm-wiki.md"
+    },
+    {
+      "source": "The Wiki",
+      "target": "log.md",
+      "predicate": "contains",
+      "source_doc": "file:///home/phun/workspace/dewly/python/personal-knowledge-ai/raw/local/llm-wiki.md"
+    },
+    {
+      "source": "The Wiki",
+      "target": "Obsidian",
+      "predicate": "is browsed via",
+      "source_doc": "file:///home/phun/workspace/dewly/python/personal-knowledge-ai/raw/local/llm-wiki.md"
+    },
+    {
+      "source": "The Wiki",
+      "target": "Marp",
+      "predicate": "generates content with",
+      "source_doc": "file:///home/phun/workspace/dewly/python/personal-knowledge-ai/raw/local/llm-wiki.md"
+    },
+    {
+      "source": "The Wiki",
+      "target": "Dataview",
+      "predicate": "is queried by",
+      "source_doc": "file:///home/phun/workspace/dewly/python/personal-knowledge-ai/raw/local/llm-wiki.md"
+    },
+    {
+      "source": "Ingest",
+      "target": "Raw Sources",
+      "predicate": "processes",
+      "source_doc": "file:///home/phun/workspace/dewly/python/personal-knowledge-ai/raw/local/llm-wiki.md"
+    },
+    {
+      "source": "Ingest",
+      "target": "The Wiki",
+      "predicate": "updates",
+      "source_doc": "file:///home/phun/workspace/dewly/python/personal-knowledge-ai/raw/local/llm-wiki.md"
+    },
+    {
+      "source": "Ingest",
+      "target": "index.md",
+      "predicate": "updates",
+      "source_doc": "file:///home/phun/workspace/dewly/python/personal-knowledge-ai/raw/local/llm-wiki.md"
+    },
+    {
+      "source": "Ingest",
+      "target": "log.md",
+      "predicate": "appends to",
+      "source_doc": "file:///home/phun/workspace/dewly/python/personal-knowledge-ai/raw/local/llm-wiki.md"
+    },
+    {
+      "source": "Query",
+      "target": "The Wiki",
+      "predicate": "targets",
+      "source_doc": "file:///home/phun/workspace/dewly/python/personal-knowledge-ai/raw/local/llm-wiki.md"
+    },
+    {
+      "source": "Query",
+      "target": "log.md",
+      "predicate": "appends to",
+      "source_doc": "file:///home/phun/workspace/dewly/python/personal-knowledge-ai/raw/local/llm-wiki.md"
+    },
+    {
+      "source": "Lint",
+      "target": "The Wiki",
+      "predicate": "targets",
+      "source_doc": "file:///home/phun/workspace/dewly/python/personal-knowledge-ai/raw/local/llm-wiki.md"
+    },
+    {
+      "source": "Lint",
+      "target": "log.md",
+      "predicate": "appends to",
+      "source_doc": "file:///home/phun/workspace/dewly/python/personal-knowledge-ai/raw/local/llm-wiki.md"
+    },
+    {
+      "source": "Obsidian",
+      "target": "Marp",
+      "predicate": "supports",
+      "source_doc": "file:///home/phun/workspace/dewly/python/personal-knowledge-ai/raw/local/llm-wiki.md"
+    },
+    {
+      "source": "Obsidian",
+      "target": "Dataview",
+      "predicate": "supports",
+      "source_doc": "file:///home/phun/workspace/dewly/python/personal-knowledge-ai/raw/local/llm-wiki.md"
+    },
+    {
+      "source": "Vannevar Bush",
+      "target": "Memex",
+      "predicate": "conceived",
+      "source_doc": "file:///home/phun/workspace/dewly/python/personal-knowledge-ai/raw/local/llm-wiki.md"
+    },
+    {
+      "source": "QMD",
+      "target": "BM25 Full-Text Search",
+      "predicate": "integrates",
+      "source_doc": "file:///home/phun/workspace/dewly/python/personal-knowledge-ai/raw/local/qmd.md"
+    },
+    {
+      "source": "QMD",
+      "target": "Vector Semantic Search",
+      "predicate": "integrates",
+      "source_doc": "file:///home/phun/workspace/dewly/python/personal-knowledge-ai/raw/local/qmd.md"
+    },
+    {
+      "source": "QMD",
+      "target": "LLM Re-ranking",
+      "predicate": "integrates",
+      "source_doc": "file:///home/phun/workspace/dewly/python/personal-knowledge-ai/raw/local/qmd.md"
+    },
+    {
+      "source": "QMD",
+      "target": "Node-llama-cpp",
+      "predicate": "runs via",
+      "source_doc": "file:///home/phun/workspace/dewly/python/personal-knowledge-ai/raw/local/qmd.md"
+    },
+    {
+      "source": "QMD",
+      "target": "MCP Server",
+      "predicate": "provides",
+      "source_doc": "file:///home/phun/workspace/dewly/python/personal-knowledge-ai/raw/local/qmd.md"
+    },
+    {
+      "source": "QMD",
+      "target": "QMD SDK",
+      "predicate": "offers",
+      "source_doc": "file:///home/phun/workspace/dewly/python/personal-knowledge-ai/raw/local/qmd.md"
+    },
+    {
+      "source": "QMD",
+      "target": "Reciprocal Rank Fusion (RRF)",
+      "predicate": "uses",
+      "source_doc": "file:///home/phun/workspace/dewly/python/personal-knowledge-ai/raw/local/qmd.md"
+    },
+    {
+      "source": "QMD",
+      "target": "FTS Backend",
+      "predicate": "implements",
+      "source_doc": "file:///home/phun/workspace/dewly/python/personal-knowledge-ai/raw/local/qmd.md"
+    },
+    {
+      "source": "QMD",
+      "target": "Vector Backend",
+      "predicate": "implements",
+      "source_doc": "file:///home/phun/workspace/dewly/python/personal-knowledge-ai/raw/local/qmd.md"
+    },
+    {
+      "source": "QMD",
+      "target": "Reranker Backend",
+      "predicate": "implements",
+      "source_doc": "file:///home/phun/workspace/dewly/python/personal-knowledge-ai/raw/local/qmd.md"
+    },
+    {
+      "source": "QMD",
+      "target": "EmbeddingGemma-300M-Q8_0",
+      "predicate": "uses",
+      "source_doc": "file:///home/phun/workspace/dewly/python/personal-knowledge-ai/raw/local/qmd.md"
+    },
+    {
+      "source": "QMD",
+      "target": "Qwen3-Reranker-0.6B-Q8_0",
+      "predicate": "uses",
+      "source_doc": "file:///home/phun/workspace/dewly/python/personal-knowledge-ai/raw/local/qmd.md"
+    },
+    {
+      "source": "QMD",
+      "target": "QMD-Query-Expansion-1.7B-Q4_K_M",
+      "predicate": "uses",
+      "source_doc": "file:///home/phun/workspace/dewly/python/personal-knowledge-ai/raw/local/qmd.md"
+    },
+    {
+      "source": "QMD",
+      "target": "SQLite-vec",
+      "predicate": "integrates",
+      "source_doc": "file:///home/phun/workspace/dewly/python/personal-knowledge-ai/raw/local/qmd.md"
+    },
+    {
+      "source": "QMD",
+      "target": "Tree-sitter",
+      "predicate": "utilizes",
+      "source_doc": "file:///home/phun/workspace/dewly/python/personal-knowledge-ai/raw/local/qmd.md"
+    },
+    {
+      "source": "QMD",
+      "target": "Node.js",
+      "predicate": "requires",
+      "source_doc": "file:///home/phun/workspace/dewly/python/personal-knowledge-ai/raw/local/qmd.md"
+    },
+    {
+      "source": "QMD",
+      "target": "Bun",
+      "predicate": "requires",
+      "source_doc": "file:///home/phun/workspace/dewly/python/personal-knowledge-ai/raw/local/qmd.md"
+    },
+    {
+      "source": "QMD",
+      "target": "SQLite",
+      "predicate": "persists data in",
+      "source_doc": "file:///home/phun/workspace/dewly/python/personal-knowledge-ai/raw/local/qmd.md"
+    },
+    {
+      "source": "QMD",
+      "target": "AST-Aware Chunking",
+      "predicate": "supports",
+      "source_doc": "file:///home/phun/workspace/dewly/python/personal-knowledge-ai/raw/local/qmd.md"
+    },
+    {
+      "source": "LLM Re-ranking",
+      "target": "Reranker Backend",
+      "predicate": "is performed by",
+      "source_doc": "file:///home/phun/workspace/dewly/python/personal-knowledge-ai/raw/local/qmd.md"
+    },
+    {
+      "source": "Node-llama-cpp",
+      "target": "GGUF Models",
+      "predicate": "loads",
+      "source_doc": "file:///home/phun/workspace/dewly/python/personal-knowledge-ai/raw/local/qmd.md"
+    },
+    {
+      "source": "MCP Server",
+      "target": "HTTP Transport",
+      "predicate": "supports",
+      "source_doc": "file:///home/phun/workspace/dewly/python/personal-knowledge-ai/raw/local/qmd.md"
+    },
+    {
+      "source": "Claude Desktop",
+      "target": "MCP Server",
+      "predicate": "connects to",
+      "source_doc": "file:///home/phun/workspace/dewly/python/personal-knowledge-ai/raw/local/qmd.md"
+    },
+    {
+      "source": "Claude Code",
+      "target": "MCP Server",
+      "predicate": "connects to",
+      "source_doc": "file:///home/phun/workspace/dewly/python/personal-knowledge-ai/raw/local/qmd.md"
+    },
+    {
+      "source": "QMD SDK",
+      "target": "QMD Store",
+      "predicate": "creates",
+      "source_doc": "file:///home/phun/workspace/dewly/python/personal-knowledge-ai/raw/local/qmd.md"
+    },
+    {
+      "source": "Reciprocal Rank Fusion (RRF)",
+      "target": "FTS Backend",
+      "predicate": "combines results from",
+      "source_doc": "file:///home/phun/workspace/dewly/python/personal-knowledge-ai/raw/local/qmd.md"
+    },
+    {
+      "source": "Reciprocal Rank Fusion (RRF)",
+      "target": "Vector Backend",
+      "predicate": "combines results from",
+      "source_doc": "file:///home/phun/workspace/dewly/python/personal-knowledge-ai/raw/local/qmd.md"
+    },
+    {
+      "source": "FTS Backend",
+      "target": "FTS5 Index",
+      "predicate": "is powered by",
+      "source_doc": "file:///home/phun/workspace/dewly/python/personal-knowledge-ai/raw/local/qmd.md"
+    },
+    {
+      "source": "Vector Backend",
+      "target": "Vectors Vec Index",
+      "predicate": "is powered by",
+      "source_doc": "file:///home/phun/workspace/dewly/python/personal-knowledge-ai/raw/local/qmd.md"
+    },
+    {
+      "source": "EmbeddingGemma-300M-Q8_0",
+      "target": "Vector Semantic Search",
+      "predicate": "is used for",
+      "source_doc": "file:///home/phun/workspace/dewly/python/personal-knowledge-ai/raw/local/qmd.md"
+    },
+    {
+      "source": "Qwen3-Reranker-0.6B-Q8_0",
+      "target": "LLM Re-ranking",
+      "predicate": "is used for",
+      "source_doc": "file:///home/phun/workspace/dewly/python/personal-knowledge-ai/raw/local/qmd.md"
+    },
+    {
+      "source": "QMD-Query-Expansion-1.7B-Q4_K_M",
+      "target": "Query Expansion",
+      "predicate": "is used for",
+      "source_doc": "file:///home/phun/workspace/dewly/python/personal-knowledge-ai/raw/local/qmd.md"
+    },
+    {
+      "source": "SQLite",
+      "target": "FTS5 Index",
+      "predicate": "manages",
+      "source_doc": "file:///home/phun/workspace/dewly/python/personal-knowledge-ai/raw/local/qmd.md"
+    },
+    {
+      "source": "SQLite",
+      "target": "Vectors Vec Index",
+      "predicate": "manages",
+      "source_doc": "file:///home/phun/workspace/dewly/python/personal-knowledge-ai/raw/local/qmd.md"
+    },
+    {
+      "source": "QMD Store",
+      "target": "Query Expansion",
+      "predicate": "performs",
+      "source_doc": "file:///home/phun/workspace/dewly/python/personal-knowledge-ai/raw/local/qmd.md"
+    },
+    {
+      "source": "QMD Store",
+      "target": "Smart Chunking",
+      "predicate": "uses",
+      "source_doc": "file:///home/phun/workspace/dewly/python/personal-knowledge-ai/raw/local/qmd.md"
+    },
+    {
+      "source": "Query Expansion",
+      "target": "BM25 Full-Text Search",
+      "predicate": "informs",
+      "source_doc": "file:///home/phun/workspace/dewly/python/personal-knowledge-ai/raw/local/qmd.md"
+    },
+    {
+      "source": "Query Expansion",
+      "target": "Vector Semantic Search",
+      "predicate": "informs",
+      "source_doc": "file:///home/phun/workspace/dewly/python/personal-knowledge-ai/raw/local/qmd.md"
+    },
+    {
+      "source": "Smart Chunking",
+      "target": "AST-Aware Chunking",
+      "predicate": "includes",
+      "source_doc": "file:///home/phun/workspace/dewly/python/personal-knowledge-ai/raw/local/qmd.md"
+    }
+  ]
+};
+        
+        document.getElementById('stats-summary').innerText = 
+            `Total: ${data.nodes.length} nodes, ${data.links.length} edges`;
+            
+        const width = window.innerWidth;
+        const height = window.innerHeight;
+        
+        const colors = {
+            "SERVICE": "#58a6ff",
+            "PIPELINE": "#3fb950",
+            "CONCEPT": "#d2a8ff",
+            "PERSON": "#f2cc60",
+            "DATABASE": "#ff7b72",
+            "ARTIFACT": "#79c0ff"
+        };
+        
+        const defaultColor = "#bc8cff";
+        
+        const svg = d3.select("#viz");
+        
+        // Add zoom behavior
+        const container = svg.append("g");
+        svg.call(d3.zoom()
+            .scaleExtent([0.1, 4])
+            .on("zoom", (event) => {
+                container.attr("transform", event.transform);
+            }));
+            
+        // Setup markers for arrowheads
+        svg.append("defs").selectAll("marker")
+            .data(["suit"])
+            .enter().append("marker")
+            .attr("id", d => d)
+            .attr("viewBox", "0 -5 10 10")
+            .attr("refX", 22)
+            .attr("refY", 0)
+            .attr("markerWidth", 6)
+            .attr("markerHeight", 6)
+            .attr("orient", "auto")
+            .append("path")
+            .attr("d", "M0,-5L10,0L0,5")
+            .attr("fill", "#30363d");
+
+        // Force simulation
+        const simulation = d3.forceSimulation(data.nodes)
+            .force("link", d3.forceLink(data.links).id(d => d.id).distance(120))
+            .force("charge", d3.forceManyBody().strength(-300))
+            .force("center", d3.forceCenter(width / 2, height / 2))
+            .force("collision", d3.forceCollide().radius(30));
+            
+        // Draw links
+        const link = container.append("g")
+            .attr("class", "links")
+            .selectAll("path")
+            .data(data.links)
+            .enter().append("path")
+            .attr("class", "link")
+            .attr("stroke", "#30363d")
+            .attr("marker-end", "url(#suit)");
+            
+        // Draw edge labels
+        const edgeLabel = container.append("g")
+            .selectAll("text")
+            .data(data.links)
+            .enter().append("text")
+            .attr("class", "edge-label")
+            .attr("text-anchor", "middle")
+            .text(d => d.predicate);
+
+        // Draw nodes
+        const node = container.append("g")
+            .attr("class", "nodes")
+            .selectAll("circle")
+            .data(data.nodes)
+            .enter().append("circle")
+            .attr("class", "node")
+            .attr("r", d => d.type === "SERVICE" || d.type === "PIPELINE" ? 12 : 8)
+            .attr("fill", d => colors[d.type] || defaultColor)
+            .attr("stroke", "#0d1117")
+            .on("click", (event, d) => showNodeDetails(d))
+            .call(d3.drag()
+                .on("start", dragstarted)
+                .on("drag", dragged)
+                .on("end", dragended));
+                
+        // Draw labels
+        const label = container.append("g")
+            .selectAll("text")
+            .data(data.nodes)
+            .enter().append("text")
+            .attr("class", "node-label")
+            .attr("dx", 15)
+            .attr("dy", 4)
+            .text(d => d.id);
+            
+        simulation.on("tick", () => {
+            link.attr("d", d => {
+                // Simple straight line path
+                return `M${d.source.x},${d.source.y} L${d.target.x},${d.target.y}`;
+            });
+            
+            node
+                .attr("cx", d => d.x)
+                .attr("cy", d => d.y);
+                
+            label
+                .attr("x", d => d.x)
+                .attr("y", d => d.y);
+                
+            edgeLabel
+                .attr("x", d => (d.source.x + d.target.x) / 2)
+                .attr("y", d => (d.source.y + d.target.y) / 2 - 5);
+        });
+        
+        function showNodeDetails(d) {
+            document.getElementById('empty-state').style.display = 'none';
+            
+            const detailPane = document.getElementById('detail-pane');
+            detailPane.style.display = 'block';
+            
+            document.getElementById('det-name').innerText = d.id;
+            
+            const typeBadge = document.getElementById('det-type');
+            typeBadge.innerText = d.type;
+            typeBadge.className = `node-type type-${d.type.toLowerCase()}`;
+            
+            document.getElementById('det-desc').innerText = d.description || "No description available.";
+            
+            const aliasesContainer = document.getElementById('det-aliases');
+            aliasesContainer.innerHTML = '';
+            if (d.aliases && d.aliases.length > 0) {
+                d.aliases.forEach(alias => {
+                    const pill = document.createElement('span');
+                    pill.className = 'pill';
+                    pill.innerText = alias;
+                    aliasesContainer.appendChild(pill);
+                });
+            } else {
+                aliasesContainer.innerHTML = '<span class="subtitle">None</span>';
+            }
+            
+            const docsContainer = document.getElementById('det-docs');
+            docsContainer.innerHTML = '';
+            if (d.source_docs && d.source_docs.length > 0) {
+                d.source_docs.forEach(doc => {
+                    const link = document.createElement('a');
+                    link.className = 'source-link';
+                    link.href = doc;
+                    link.target = '_blank';
+                    
+                    // Format pretty link text
+                    let linkText = doc;
+                    if (doc.startsWith('file://')) {
+                        linkText = doc.substring(doc.lastIndexOf('/') + 1);
+                    }
+                    link.innerText = linkText;
+                    docsContainer.appendChild(link);
+                });
+            } else {
+                docsContainer.innerHTML = '<span class="subtitle">None</span>';
+            }
+        }
+
+        function dragstarted(event, d) {
+            if (!event.active) simulation.alphaTarget(0.3).restart();
+            d.fx = d.x;
+            d.fy = d.y;
+        }
+
+        function dragged(event, d) {
+            d.fx = event.x;
+            d.fy = event.y;
+        }
+
+        function dragended(event, d) {
+            if (!event.active) simulation.alphaTarget(0);
+            d.fx = null;
+            d.fy = null;
+        }
+    </script>
+</body>
+</html>

@@ -1,0 +1,26 @@
+{
+  "auth_service.md": {
+    "entities": [
+      {"name": "Auth Service", "type": "SERVICE"},
+      {"name": "Platform Team", "type": "ORGANIZATION"},
+      {"name": "User Database", "type": "DATABASE"},
+      {"name": "Redis", "type": "DATABASE"}
+    ],
+    "relations": [
+      {"source": "Auth Service", "predicate": "owned by", "target": "Platform Team"},
+      {"source": "Auth Service", "predicate": "depends on", "target": "User Database"},
+      {"source": "Auth Service", "predicate": "depends on", "target": "Redis"}
+    ]
+  },
+  "payment_pipeline.md": {
+    "entities": [
+      {"name": "Payment Processing Pipeline", "type": "PIPELINE"},
+      {"name": "Auth Service", "type": "SERVICE"},
+      {"name": "Finance Service", "type": "SERVICE"}
+    ],
+    "relations": [
+      {"source": "Payment Processing Pipeline", "predicate": "depends on", "target": "Auth Service"},
+      {"source": "Payment Processing Pipeline", "predicate": "operated by", "target": "Finance Service"}
+    ]
+  }
+}
