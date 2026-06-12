@@ -53,6 +53,7 @@ def create_conversational_agent(temperature: float = 0.0):
         agent=agent,
         tools=tools,
         verbose=True,
+        return_intermediate_steps=True,
     )
     
     return agent_executor

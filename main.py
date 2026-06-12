@@ -16,6 +16,8 @@ from apscheduler.schedulers.background import BackgroundScheduler
 from app.services.graph_store import GraphStore
 from app.core.redis import get_redis_client
 from app.agent import create_conversational_agent
+from app.memory.session_store import SessionStore
+from app.memory.history_manager import HistoryManager
 
 class QueueCallbackHandler(BaseCallbackHandler):
     """Callback handler to stream LLM tokens, token usage, and tool executions into an asyncio.Queue."""
@@ -134,6 +136,11 @@ async def lifespan(app: FastAPI):
         print("Connected to Redis successfully.")
     except Exception as e:
         print(f"Warning: Failed to connect to Redis: {e}")
+
+    # Initialize SessionStore and HistoryManager
+    app.state.session_store = SessionStore()
+    app.state.history_manager = HistoryManager(store=app.state.session_store)
+    print("SessionStore and HistoryManager initialized.")
         
     # 3. Start Daily Scheduler
     scheduler = BackgroundScheduler()
@@ -149,6 +156,10 @@ async def lifespan(app: FastAPI):
     if hasattr(app.state, "scheduler"):
         app.state.scheduler.shutdown()
         print("Scheduler shut down successfully.")
+    if hasattr(app.state, "session_store"):
+        await app.state.session_store.flush()
+        app.state.session_store.close()
+        print("Session store background tasks flushed and closed.")
 
 
 app = FastAPI(lifespan=lifespan)
@@ -164,22 +175,21 @@ app.add_middleware(
 
 class ChatRequest(BaseModel):
     query: str
-    chat_history: List[Tuple[str, str]] = []
+    session_id: str
 
-async def chat_generator(query: str, chat_history: List[Tuple[str, str]]):
+async def chat_generator(query: str, session_id: str, history_manager: HistoryManager):
     queue = asyncio.Queue()
     cb = QueueCallbackHandler(queue)
     
-    formatted_history = []
-    for role, text in chat_history:
-        formatted_history.append((role, text))
+    # Retrieve compressed history from store
+    chat_history = await history_manager.get_context(session_id)
         
     agent = create_conversational_agent(temperature=0.0)
     
     # Run agent in background task
     task = asyncio.create_task(
         agent.ainvoke(
-            {"input": query, "chat_history": formatted_history},
+            {"input": query, "chat_history": chat_history},
             config={"callbacks": [cb]}
         )
     )
@@ -226,6 +236,9 @@ async def chat_generator(query: str, chat_history: List[Tuple[str, str]]):
         # Record costs in Redis
         estimated_cost = accumulate_costs(total_input, total_output)
         
+        # Append the user turn to MongoDB + Redis history
+        await history_manager.append_turn(session_id, query, output, res.get("intermediate_steps"))
+        
         done_payload = {
             'type': 'done',
             'output': output,
@@ -240,9 +253,47 @@ async def chat_generator(query: str, chat_history: List[Tuple[str, str]]):
 async def chat_stream(request: ChatRequest):
     """Streams chat tokens and intermediate tool execution steps from the agent."""
     return StreamingResponse(
-        chat_generator(request.query, request.chat_history),
+        chat_generator(request.query, request.session_id, app.state.history_manager),
         media_type="text/event-stream"
     )
+
+@app.get("/api/chat/{session_id}")
+async def get_chat_history(session_id: str):
+    """Retrieves the raw conversation history messages for a given session."""
+    store = app.state.session_store
+    from langchain_core.messages import messages_to_dict
+    messages = await store.load(session_id)
+    return {"messages": messages_to_dict(messages)}
+
+@app.delete("/api/chat/{session_id}")
+async def clear_chat_history(session_id: str):
+    """Clears history for a given session."""
+    await app.state.history_manager.clear(session_id)
+    return {"status": "ok", "message": f"Chat history for session {session_id} has been cleared"}
+
+class SyncHistoryRequest(BaseModel):
+    messages: List[Dict[str, str]]
+
+@app.post("/api/chat/{session_id}/sync")
+async def sync_chat_history(session_id: str, payload: SyncHistoryRequest):
+    """Syncs/overwrites the conversation history for a given session."""
+    from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
+    
+    langchain_messages = []
+    for msg in payload.messages:
+        role = msg.get("role")
+        content = msg.get("content", "")
+        if role == "user":
+            langchain_messages.append(HumanMessage(content=content))
+        elif role == "assistant":
+            langchain_messages.append(AIMessage(content=content))
+        elif role == "system":
+            langchain_messages.append(SystemMessage(content=content))
+            
+    store = app.state.session_store
+    await store.save(session_id, langchain_messages)
+    await store.flush()
+    return {"status": "ok", "message": f"Chat history for session {session_id} synced successfully."}
 
 class IngestRequest(BaseModel):
     source: str
@@ -301,8 +352,20 @@ async def get_cost_stats():
         raise HTTPException(status_code=500, detail=f"Error accessing cost stats from Redis: {e}")
 
 @app.get("/api/health")
-def health_check():
-    return {"status": "ok", "message": "Server FastAPI đang hoạt động"}
+async def health_check():
+    store = app.state.session_store
+    mongo_ok = await store.ping_mongo()
+    redis_ok = await store.ping_redis()
+    
+    overall = "ok" if (mongo_ok and redis_ok) else "degraded"
+    
+    return {
+        "status": overall,
+        "fastapi": "ok",
+        "redis": "connected" if redis_ok else "disconnected",
+        "mongodb": "connected" if mongo_ok else "disconnected",
+        "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat()
+    }
 
 # Mount Chainlit chat UI on /chat
 mount_chainlit(app=app, target="app.py", path="/chat")

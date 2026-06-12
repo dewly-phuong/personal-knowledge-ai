@@ -6,8 +6,15 @@ import httpx
 import json
 from typing import Optional
 from fastapi import Request, Response
+from chainlit.types import ThreadDict
 
 logger = logging.getLogger(__name__)
+
+from app.memory.mongodb_data_layer import MongoDBDataLayer
+
+@cl.data_layer
+def get_data_layer():
+    return MongoDBDataLayer()
 
 @cl.password_auth_callback
 def auth_callback(username: str, password: str) -> Optional[cl.User]:
@@ -42,7 +49,61 @@ async def set_chat_starters():
 async def start():
     user = cl.user_session.get("user")
     logger.info(f"{user.identifier if user else 'Guest'} has started the conversation")
-    cl.user_session.set("chat_history", [])
+    session_id = cl.context.session.id
+    cl.user_session.set("session_id", session_id)
+    
+    # Fetch and restore past chat history for this session
+    api_url = f"http://localhost:8000/api/chat/{session_id}"
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.get(api_url)
+            if resp.status_code == 200:
+                history_data = resp.json()
+                messages = history_data.get("messages", [])
+                for msg in messages:
+                    msg_type = msg.get("type")
+                    content = msg.get("data", {}).get("content", "")
+                    if not content:
+                        continue
+                        
+                    if msg_type == "human":
+                        await cl.Message(content=content, author="User").send()
+                    elif msg_type == "ai":
+                        # Resolve citations if any exist in the response
+                        resolved_content = resolve_citations(content)
+                        await cl.Message(content=resolved_content, author="Assistant").send()
+    except Exception as e:
+        logger.warning(f"Failed to retrieve chat history on start: {e}")
+
+@cl.on_chat_resume
+async def on_chat_resume(thread: ThreadDict):
+    """Handler function to resume a chat and restore backend history"""
+    session_id = thread.get("id", cl.context.session.id)
+    cl.user_session.set("session_id", session_id)
+    
+    # Parse the steps and build history payload
+    sync_messages = []
+    for step in thread["steps"]:
+        step_type = step["type"]
+        step_output = step["output"]
+        if not step_output:
+            continue
+            
+        if step_type == "user_message":
+            sync_messages.append({"role": "user", "content": step_output})
+        elif step_type == "assistant_message":
+            sync_messages.append({"role": "assistant", "content": step_output})
+            
+    # Sync with FastAPI backend
+    api_url = f"http://localhost:8000/api/chat/{session_id}/sync"
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            await client.post(api_url, json={"messages": sync_messages})
+    except Exception as e:
+        logger.warning(f"Failed to sync chat history on resume: {e}")
+        
+    user = cl.user_session.get("user")
+    logger.info(f"{user.identifier if user else 'Guest'} has resumed chat")
 
 @cl.on_chat_end
 def on_chat_end():
@@ -90,7 +151,7 @@ def resolve_citations(text: str) -> str:
 
 @cl.on_message
 async def on_message(message: cl.Message):
-    chat_history = cl.user_session.get("chat_history", [])
+    session_id = cl.user_session.get("session_id")
     url = "http://localhost:8000/api/chat"
     
     # Initialize main message
@@ -99,7 +160,7 @@ async def on_message(message: cl.Message):
     
     payload = {
         "query": message.content,
-        "chat_history": chat_history
+        "session_id": session_id
     }
     
     # Keep track of active Chainlit steps (tool calls)
@@ -109,7 +170,8 @@ async def on_message(message: cl.Message):
         async with httpx.AsyncClient(timeout=90.0) as client:
             async with client.stream("POST", url, json=payload) as response:
                 if response.status_code != 200:
-                    await streamed_msg.update(content=f"Error from server: HTTP {response.status_code}")
+                    streamed_msg.content = f"Error from server: HTTP {response.status_code}"
+                    await streamed_msg.update()
                     return
                     
                 async for line in response.aiter_lines():
@@ -124,7 +186,7 @@ async def on_message(message: cl.Message):
                                 step_name = data.get("name")
                                 step_input = data.get("input")
                                 
-                                step = cl.Step(name=step_name)
+                                step = cl.Step(name=step_name, type="tool", parent_id=message.id)
                                 step.input = step_input
                                 await step.send()
                                 active_steps[step_name] = step
@@ -139,13 +201,25 @@ async def on_message(message: cl.Message):
                                     
                             elif dtype == "token":
                                 # 3. Stream text tokens to main message
-                                await streamed_msg.stream_token(data["token"])
+                                token_val = data["token"]
+                                if isinstance(token_val, list):
+                                    text_token = ""
+                                    for part in token_val:
+                                        if isinstance(part, dict) and "text" in part:
+                                            text_token += part["text"]
+                                        elif isinstance(part, str):
+                                            text_token += part
+                                    token_val = text_token
+                                elif isinstance(token_val, dict) and "text" in token_val:
+                                    token_val = token_val["text"]
+                                await streamed_msg.stream_token(token_val)
                                 
                             elif dtype == "done":
                                 # 4. Resolve wiki links/citations to clickable remote URLs
                                 final_output = data.get("output", "")
                                 resolved_output = resolve_citations(final_output)
-                                await streamed_msg.update(content=resolved_output)
+                                streamed_msg.content = resolved_output
+                                await streamed_msg.update()
                                 
                             elif dtype == "error":
                                 await streamed_msg.stream_token(f"\n[Error: {data['error']}]")
@@ -153,10 +227,6 @@ async def on_message(message: cl.Message):
                         except Exception as json_err:
                             print(f"Error parsing chunk: {json_err} for line: {line}")
                             
-        # Save chat history
-        chat_history.append(("human", message.content))
-        chat_history.append(("ai", streamed_msg.content))
-        cl.user_session.set("chat_history", chat_history)
         await streamed_msg.update()
         
     except Exception as e:
