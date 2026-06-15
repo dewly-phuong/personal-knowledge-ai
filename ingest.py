@@ -17,6 +17,7 @@ from app.services.compiler import WikiCompiler
 from app.services.embedding import get_embedding_service
 from app.services.qdrant_sync import QdrantSyncManager
 from app.core.redis import get_redis_client
+from app.services.mongodb_import import import_json_files_to_mongodb, import_csv_files_to_mongodb
 
 def run_ingest_pipeline(
     source: str,
@@ -41,12 +42,17 @@ def run_ingest_pipeline(
             raise ValueError("--dir is required for local source.")
         connector = LocalFilesConnector(directory_path=dir_path)
         try:
-            from app.services.mongodb_import import import_json_files_to_mongodb
             print("Importing local JSON files to MongoDB...")
             res = import_json_files_to_mongodb(dir_path=dir_path)
             print(f"JSON Import Result: {res}")
         except Exception as e:
             print(f"Warning: Failed to import JSON files to MongoDB: {e}")
+        try:
+            print("Importing local CSV files to MongoDB...")
+            csv_res = import_csv_files_to_mongodb(dir_path=dir_path)
+            print(f"CSV Import Result: {csv_res}")
+        except Exception as e:
+            print(f"Warning: Failed to import CSV files to MongoDB: {e}")
     elif source == "github":
         if not repo_name:
             raise ValueError("--repo is required for github source.")

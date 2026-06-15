@@ -1,0 +1,27 @@
+month,year,provider,service_category,service_name,resource_id,environment,project,quantity,unit,unit_cost_usd,total_cost_usd,total_cost_vnd,owner_team,note
+9,2024,AWS,Compute,EC2 - c5.2xlarge,i-0a1b2c3d4e5f,Production,VisionChat,6,instance/month,276.48,1658.88,41472000,Kỹ thuật,6 worker nodes EKS
+9,2024,AWS,Compute,EC2 - g4dn.xlarge (GPU),i-0b2c3d4e5f6g,Production,NLP Inference,2,instance/month,526.40,1052.80,26320000,AI Research,2 GPU nodes cho NLU service
+9,2024,AWS,Database,RDS PostgreSQL db.r6g.large Multi-AZ,db-prod-main,Production,Platform,1,instance/month,210.24,210.24,5256000,Kỹ thuật,Primary DB với standby
+9,2024,AWS,Cache,ElastiCache Redis r6g.large cluster,cache-prod-01,Production,Platform,1,cluster/month,157.68,157.68,3942000,Kỹ thuật,Redis cluster 3 nodes
+9,2024,AWS,Storage,S3 Standard,s3-prod-assets,Production,Platform,4200,GB/month,0.023,96.60,2415000,Kỹ thuật,File uploads và backups
+9,2024,AWS,Storage,S3 Standard (Logs),s3-prod-logs,Production,Platform,1800,GB/month,0.023,41.40,1035000,Kỹ thuật,Application logs 30 ngày
+9,2024,AWS,Network,CloudFront CDN,dist-ABCDEF,Production,VisionChat,850,GB transfer,0.085,72.25,1806250,Kỹ thuật,Static assets delivery
+9,2024,AWS,Network,ALB,alb-prod-main,Production,Platform,1,month,22.64,22.64,566000,Kỹ thuật,Application Load Balancer
+9,2024,AWS,Network,Data Transfer Out,nat-prod-01,Production,Platform,2200,GB,0.09,198.00,4950000,Kỹ thuật,Outbound traffic
+9,2024,AWS,Messaging,MSK (Kafka) kafka.m5.large,msk-prod-cluster,Production,Platform,3,broker/month,210.24,630.72,15768000,Kỹ thuật,3-broker Kafka cluster
+9,2024,AWS,Security,AWS Secrets Manager,,Production,Platform,45,secret/month,0.40,18.00,450000,Kỹ thuật,
+9,2024,AWS,Monitoring,CloudWatch Logs,,Production,Platform,950,GB ingested,0.50,475.00,11875000,Kỹ thuật,
+9,2024,AWS,Compute,EC2 - t3.medium (Staging),i-staging-01,Staging,Platform,3,instance/month,34.18,102.54,2563500,Kỹ thuật,Staging environment
+9,2024,AWS,Database,RDS PostgreSQL db.t3.medium (Staging),db-staging-main,Staging,Platform,1,instance/month,52.56,52.56,1314000,Kỹ thuật,
+9,2024,Self-hosted,Compute,K8s Self-managed (VPS),vps-weaviate-01,Production,VisionChat,1,server/month,120.00,120.00,3000000,AI Research,Weaviate Vector DB host
+9,2024,Self-hosted,Compute,K8s Self-managed (VPS),vps-clickhouse-01,Production,DataPulse,1,server/month,120.00,120.00,3000000,AI Research,ClickHouse OLAP host
+9,2024,Self-hosted,Compute,K8s Self-managed (VPS),vps-minio-01,Production,Platform,1,server/month,80.00,80.00,2000000,Kỹ thuật,MinIO object storage
+9,2024,SaaS,Monitoring,Grafana Cloud Pro,,Production,Platform,1,workspace/month,299.00,299.00,7475000,Kỹ thuật,Metrics + Logs + Alerting
+9,2024,SaaS,CI/CD,GitHub Enterprise,,All,Platform,20,seat/month,21.00,420.00,10500000,Kỹ thuật,20 developer seats
+9,2024,SaaS,Communication,Slack Pro,,All,Operations,20,seat/month,8.75,175.00,4375000,Tất cả,20 nhân viên
+9,2024,SaaS,Project Management,Jira Software Standard,,All,Operations,20,seat/month,8.15,163.00,4075000,Tất cả,
+9,2024,SaaS,Design,Figma Professional,,All,Product,3,seat/month,15.00,45.00,1125000,Sản phẩm,3 designer seats
+9,2024,SaaS,Documentation,Notion Team,,All,Operations,20,seat/month,8.00,160.00,4000000,Tất cả,
+9,2024,SaaS,Password Manager,1Password Teams,,All,Security,20,seat/month,4.00,80.00,2000000,Tất cả,
+9,2024,SaaS,AI Tools,Claude API (Anthropic),,Production,VisionChat,850000,tokens/month,0.000015,12.75,318750,Kỹ thuật,Backup LLM cho edge cases
+9,2024,SaaS,Domain & SSL,AWS Route53 + ACM,,Production,Platform,5,domain/month,2.50,12.50,312500,Kỹ thuật,

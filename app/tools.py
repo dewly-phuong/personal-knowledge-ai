@@ -85,12 +85,12 @@ def wiki_search(query: str) -> str:
             embed_service = get_embedding_service()
             query_vector = embed_service.embed_text(query)
             
-            res = client.search(
+            res = client.query_points(
                 collection_name="wiki_pages",
-                query_vector=query_vector,
+                query=query_vector,
                 limit=10
             )
-            qdrant_ranking = [hit.payload["path"] for hit in res if hit.payload and "path" in hit.payload]
+            qdrant_ranking = [hit.payload["path"] for hit in res.points if hit.payload and "path" in hit.payload]
         except Exception as e:
             print(f"Qdrant vector search error: {e}")
 
@@ -379,26 +379,69 @@ def sync_knowledge_base() -> str:
 @tool
 def mongodb_query(collection: str, filter_json: str, projection_json: str = None, limit: int = 100) -> str:
     """
-    Query structured company data from MongoDB. Use this when you need exact facts about employees, 
-    projects, bug tracking, KPIs, or organizational charts.
-    
+    Query structured company data from MongoDB. Use this when you need exact facts about employees,
+    projects, bug tracking, KPIs, organizational charts, payroll, attendance, CRM customers,
+    sprint tickets, revenue, recruitment, AI model registry, or infrastructure costs.
+
     Available Collections & Schemas:
+
+    --- JSON-backed (master data) ---
     1. 'employees': Information about staff.
-       - Fields: id, full_name, gender, date_of_birth, department, position, level, email, phone, start_date, employment_type, status, manager_id, office, avatar
+       - Fields: id, full_name, gender, date_of_birth, department, position, level, email, phone,
+         start_date, employment_type, status, manager_id, office, avatar
     2. 'projects': Technical and business projects.
-       - Fields: id, name, code, description, type, status, phase, priority, start_date, deadline, budget_vnd, spent_vnd, progress_percent, tech_stack (list), team (dict with pm, tech_lead, members), milestones (list), risks (list), kpi (dict)
+       - Fields: id, name, code, description, type, status, phase, priority, start_date, deadline,
+         budget_vnd, spent_vnd, progress_percent, tech_stack, team, milestones, risks, kpi
     3. 'bug_tracker': Reported software/system bugs.
-       - Fields: id, title, description, project_code, severity, priority, status, reporter_id, assignee_id, created_at, closed_at, resolution
-    4. 'kpi_okr': Department objectives and key results.
-       - Fields: id, department, year, quarter, objective, key_results (list with name, target, current, status, owner_id)
-    5. 'org_chart': Reporting relations and structures.
-       - Fields: id, employee_id, role, reports_to (id), team_size
-       
+       - Fields: id, title, description, project_code, severity, priority, status, reporter_id,
+         assignee_id, created_at, closed_at, resolution
+    4. 'kpi_okr': Department OKRs.
+       - Fields: id, department, year, quarter, objective, key_results
+    5. 'org_chart': Reporting structure.
+       - Fields: id, employee_id, role, reports_to, team_size
+
+    --- CSV-backed (operational/transactional data) ---
+    CRITICAL: All field values below are stored EXACTLY as shown (including Vietnamese text).
+    Do NOT translate or guess values. Use $regex for partial/case-insensitive matching when unsure.
+
+    6. 'attendance_october_2024': Daily employee attendance for October 2024.
+       - Fields: employee_id, full_name, date (YYYY-MM-DD), day_of_week, checkin_time (HH:MM),
+         checkout_time (HH:MM), work_hours, status, note
+       - status ENUM: "Dung gio" = "Duc giờ", late = "Muon 20 phut" or "Muon 35 phut",
+         annual leave = "Nghi phep", sick leave = "Nghi om", WFH = "Remote"
+       - status exact values: "Đúng giờ", "Muộn 20 phút", "Muộn 35 phút", "Nghỉ phép", "Nghỉ ốm", "Remote"
+       - To find late employees: use filter {"status": {"$regex": "Mu\u1ed9n"}}
+       - To find employees on leave: use filter {"status": {"$in": ["Ngh\u1ec9 ph\u00e9p", "Ngh\u1ec9 \u1ed1m"]}}
+
+    7. 'payroll_september_2024': Payroll data for September 2024.
+       - Fields: employee_id, full_name, department, position, level, base_salary_gross,
+         meal_allowance, transport_allowance, phone_allowance, seniority_bonus, total_gross,
+         bhxh_8pct, bhyt_1_5pct, bhtn_1pct, taxable_income, personal_deduction,
+         dependent_deduction, tax_base, income_tax, net_salary, month, year, status
+       - status ENUM: "Đã thanh toán" (paid)
+
+    8. 'revenue_2024': Monthly revenue and business metrics for 2024.
+        - Fields: month (int 1-12), year, period (YYYY-MM), product_visionchat_starter_vnd,
+          product_visionchat_business_vnd, product_visionchat_enterprise_vnd, product_datapulse_vnd,
+          product_custom_ai_consulting_vnd, total_new_arr_vnd, total_expansion_arr_vnd,
+          total_churn_vnd, total_mrr_vnd, total_revenue_vnd, new_customers, churned_customers,
+          active_customers, avg_contract_value_vnd, cac_vnd, ltv_vnd, gross_margin_pct,
+          net_revenue_retention_pct, note
+
+    9. 'infrastructure_costs_sep2024': Cloud infrastructure costs for September 2024.
+        - Fields: month, year, provider, service_category, service_name, resource_id, environment,
+          project, quantity, unit, unit_cost_usd, total_cost_usd, total_cost_vnd, owner_team, note
+        - service_category ENUM: "Compute", "Database", "Cache", "Storage", "Network",
+          "Monitoring", "Messaging", "Security", "CI/CD", "AI Tools", "Communication",
+          "Design", "Documentation", "Domain & SSL", "Password Manager", "Project Management"
+        - environment ENUM: "Production", "Staging", "All"
+
     Args:
-        collection (str): One of the collections above ('employees', 'projects', 'bug_tracker', 'kpi_okr', 'org_chart').
-        filter_json (str): A valid JSON string representing the MongoDB query filter (e.g. '{"department": "Kỹ thuật"}').
-        projection_json (str, optional): A JSON string representing the projection fields to include/exclude.
-        limit (int, optional): Maximum number of documents to return. Defaults to 100. Max is 1000.
+        collection (str): One of the 13 collections listed above.
+        filter_json (str): A valid JSON string for the MongoDB query filter.
+                           Example for late employees: '{"status": {"$regex": "Muon"}}'
+        projection_json (str, optional): JSON string for field projection. Use {"_id": 0} to hide IDs.
+        limit (int, optional): Max documents to return. Defaults to 100. Max is 1000.
     """
     import json
     # Restrict limit to avoid token blow-up, but allow up to 1000 for full-collection queries
@@ -410,8 +453,15 @@ def mongodb_query(collection: str, filter_json: str, projection_json: str = None
         client = MongoClient(mongo_uri)
         db = client["personal_knowledge_ai"]
         
-        if collection not in ['employees', 'projects', 'bug_tracker', 'kpi_okr', 'org_chart']:
-            return f"Error: Collection '{collection}' is invalid. Allowed collections: employees, projects, bug_tracker, kpi_okr, org_chart."
+        ALLOWED_COLLECTIONS = db.list_collection_names()
+        
+        # ALLOWED_COLLECTIONS = [
+        #     'employees', 'projects', 'bug_tracker', 'kpi_okr', 'org_chart',
+        #     'attendance_october_2024', 'payroll_september_2024', 'revenue_2024', 
+        #     'infrastructure_costs_sep2024'
+        # ]
+        if collection not in ALLOWED_COLLECTIONS:
+            return f"Error: Collection '{collection}' is invalid. Allowed collections: {', '.join(ALLOWED_COLLECTIONS)}."
             
         col = db[collection]
         
