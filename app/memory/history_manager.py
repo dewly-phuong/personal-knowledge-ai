@@ -11,13 +11,13 @@ class HistoryManager:
 
     async def get_context(self, session_id: str) -> List[BaseMessage]:
         """
-        Loads the raw conversation history from the store, runs the compression/summarization
-        mechanism if it exceeds 3 turns, and returns a prompt-ready list of messages.
+        Loads the raw conversation history from the store and returns a prompt-ready list of messages.
+        (Context compression is handled downstream by Headroom).
         """
         raw_history = await self.store.load(session_id)
         if not raw_history:
             return []
-        return await compress_history(raw_history, self.llm)
+        return raw_history
 
     async def append_turn(
         self,

@@ -27,4 +27,5 @@ dependencies = [
     "apscheduler>=3.11.2",
     "motor>=3.3.0",
     "aiosqlite>=0.20.0",
+    "headroom-ai[code,langchain,mcp]>=0.25.0",
 ]

@@ -1,3 +1,10 @@
+# Fix for engineio packet limit error ("Too many packets in payload")
+try:
+    from engineio.payload import Payload
+    Payload.max_decode_packets = 2048
+except ImportError:
+    pass
+
 import asyncio
 import json
 import os

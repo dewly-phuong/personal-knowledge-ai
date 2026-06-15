@@ -40,6 +40,13 @@ def run_ingest_pipeline(
         if not dir_path:
             raise ValueError("--dir is required for local source.")
         connector = LocalFilesConnector(directory_path=dir_path)
+        try:
+            from app.services.mongodb_import import import_json_files_to_mongodb
+            print("Importing local JSON files to MongoDB...")
+            res = import_json_files_to_mongodb(dir_path=dir_path)
+            print(f"JSON Import Result: {res}")
+        except Exception as e:
+            print(f"Warning: Failed to import JSON files to MongoDB: {e}")
     elif source == "github":
         if not repo_name:
             raise ValueError("--repo is required for github source.")

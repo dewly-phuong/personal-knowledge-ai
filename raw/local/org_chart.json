@@ -1,0 +1,86 @@
+{
+  "company": "TechVision AI",
+  "updated_at": "2024-10-01",
+  "org": {
+    "id": "EMP001",
+    "name": "Nguyễn Minh Khoa",
+    "title": "CEO & Co-founder",
+    "department": "Lãnh đạo",
+    "children": [
+      {
+        "id": "EMP002",
+        "name": "Trần Thị Lan Anh",
+        "title": "CTO & Co-founder",
+        "department": "Lãnh đạo",
+        "children": [
+          {
+            "id": "EMP005",
+            "name": "Vũ Hoàng Nam",
+            "title": "Engineering Manager",
+            "department": "Kỹ thuật",
+            "children": [
+              { "id": "EMP006", "name": "Đỗ Thị Bích Ngọc", "title": "Senior Software Engineer", "department": "Kỹ thuật", "children": [] },
+              { "id": "EMP007", "name": "Hoàng Văn Tuấn", "title": "Software Engineer", "department": "Kỹ thuật", "children": [] },
+              { "id": "EMP008", "name": "Nguyễn Thị Phương Thảo", "title": "Junior Software Engineer", "department": "Kỹ thuật", "children": [] },
+              { "id": "EMP017", "name": "Lưu Minh Tiến", "title": "DevOps Engineer", "department": "Kỹ thuật", "children": [] },
+              { "id": "EMP019", "name": "Tô Quang Khải", "title": "QA Engineer", "department": "Kỹ thuật", "children": [] }
+            ]
+          },
+          {
+            "id": "EMP009",
+            "name": "Trịnh Quốc Bảo",
+            "title": "AI Research Lead",
+            "department": "AI Research",
+            "children": [
+              { "id": "EMP010", "name": "Lý Ngọc Hân", "title": "ML Engineer", "department": "AI Research", "children": [] },
+              { "id": "EMP011", "name": "Bùi Thanh Sơn", "title": "Data Scientist", "department": "AI Research", "children": [] },
+              { "id": "EMP020", "name": "Võ Thị Mỹ Linh", "title": "AI Engineer Intern", "department": "AI Research", "children": [] }
+            ]
+          }
+        ]
+      },
+      {
+        "id": "EMP003",
+        "name": "Phạm Đức Hùng",
+        "title": "CPO",
+        "department": "Lãnh đạo",
+        "children": [
+          {
+            "id": "EMP012",
+            "name": "Ngô Thị Kiều Oanh",
+            "title": "Product Manager",
+            "department": "Sản phẩm",
+            "children": [
+              { "id": "EMP013", "name": "Đinh Công Minh", "title": "UI/UX Designer", "department": "Sản phẩm", "children": [] }
+            ]
+          }
+        ]
+      },
+      {
+        "id": "EMP004",
+        "name": "Lê Thị Thu Hương",
+        "title": "HR Manager",
+        "department": "Nhân sự",
+        "children": [
+          { "id": "EMP018", "name": "Dương Thị Hồng Nhung", "title": "HR Executive", "department": "Nhân sự", "children": [] }
+        ]
+      },
+      {
+        "id": "EMP014",
+        "name": "Hà Thị Minh Châu",
+        "title": "Sales Manager",
+        "department": "Kinh doanh",
+        "children": [
+          { "id": "EMP015", "name": "Phan Văn Đạt", "title": "Business Development Executive", "department": "Kinh doanh", "children": [] }
+        ]
+      },
+      {
+        "id": "EMP016",
+        "name": "Cao Thị Thanh Hà",
+        "title": "Marketing Executive",
+        "department": "Marketing",
+        "children": []
+      }
+    ]
+  }
+}

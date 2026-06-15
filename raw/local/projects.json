@@ -1,0 +1,135 @@
+[
+  {
+    "id": "PRJ001",
+    "name": "VisionChat – AI Customer Support Platform",
+    "code": "VISION-CHAT",
+    "description": "Nền tảng hỗ trợ khách hàng tự động sử dụng AI NLP tiếng Việt, tích hợp đa kênh (Zalo, Facebook, Web widget, Email).",
+    "type": "Product",
+    "status": "In Progress",
+    "phase": "Beta",
+    "priority": "High",
+    "start_date": "2024-01-15",
+    "deadline": "2024-12-31",
+    "budget_vnd": 2500000000,
+    "spent_vnd": 1450000000,
+    "team": {
+      "pm": "EMP012",
+      "tech_lead": "EMP006",
+      "members": ["EMP007", "EMP008", "EMP010", "EMP013", "EMP017", "EMP019"]
+    },
+    "tech_stack": ["FastAPI", "React", "PostgreSQL", "Redis", "Kafka", "Kubernetes", "PyTorch"],
+    "progress_percent": 65,
+    "milestones": [
+      { "name": "MVP Backend hoàn thành", "date": "2024-04-30", "status": "Done" },
+      { "name": "Beta UI/UX", "date": "2024-07-15", "status": "Done" },
+      { "name": "Tích hợp Zalo OA", "date": "2024-09-30", "status": "Done" },
+      { "name": "Tích hợp Facebook Messenger", "date": "2024-10-31", "status": "In Progress" },
+      { "name": "GA Release", "date": "2024-12-31", "status": "Pending" }
+    ],
+    "risks": [
+      { "risk": "API Zalo thay đổi chính sách", "likelihood": "Medium", "impact": "High", "mitigation": "Theo dõi changelog Zalo Business API hàng tuần" },
+      { "risk": "Hiệu suất model NLP với văn phong vùng miền", "likelihood": "High", "impact": "Medium", "mitigation": "Thu thập thêm dữ liệu đa phương ngữ" }
+    ],
+    "kpi": {
+      "response_accuracy": "92.3%",
+      "avg_response_time_ms": 185,
+      "daily_active_sessions": 1200
+    }
+  },
+  {
+    "id": "PRJ002",
+    "name": "DataPulse – Business Intelligence Dashboard",
+    "code": "DATAPULSE",
+    "description": "Dashboard BI thời gian thực cho doanh nghiệp vừa và nhỏ, tích hợp nhiều nguồn dữ liệu (ERP, CRM, Excel, Google Sheets).",
+    "type": "Product",
+    "status": "In Progress",
+    "phase": "Alpha",
+    "priority": "Medium",
+    "start_date": "2024-05-01",
+    "deadline": "2025-03-31",
+    "budget_vnd": 1800000000,
+    "spent_vnd": 620000000,
+    "team": {
+      "pm": "EMP012",
+      "tech_lead": "EMP006",
+      "members": ["EMP007", "EMP011", "EMP013", "EMP017"]
+    },
+    "tech_stack": ["Next.js", "Python", "ClickHouse", "Apache Superset", "dbt", "Airflow", "Docker"],
+    "progress_percent": 32,
+    "milestones": [
+      { "name": "Data connector module hoàn thành", "date": "2024-07-31", "status": "Done" },
+      { "name": "Alpha UI prototype", "date": "2024-10-15", "status": "In Progress" },
+      { "name": "Tích hợp Google Sheets & Excel", "date": "2024-12-31", "status": "Pending" },
+      { "name": "Beta release cho 5 khách hàng pilot", "date": "2025-02-28", "status": "Pending" }
+    ],
+    "risks": [
+      { "risk": "Hiệu suất query trên dataset lớn (>100M rows)", "likelihood": "Medium", "impact": "High", "mitigation": "Đánh giá ClickHouse vs BigQuery, cân nhắc sharding" }
+    ],
+    "kpi": {
+      "query_latency_p95_ms": 320,
+      "data_sources_supported": 6
+    }
+  },
+  {
+    "id": "PRJ003",
+    "name": "SaigonBank AI Chatbot (Khách hàng: SaigonBank)",
+    "code": "SGB-CHATBOT",
+    "description": "Triển khai chatbot AI cho ngân hàng SaigonBank, xử lý truy vấn tài khoản, tư vấn sản phẩm tài chính, hỗ trợ 24/7.",
+    "type": "Client Project",
+    "status": "Completed",
+    "phase": "Production",
+    "priority": "High",
+    "start_date": "2023-09-01",
+    "deadline": "2024-03-31",
+    "actual_end_date": "2024-03-28",
+    "budget_vnd": 3200000000,
+    "spent_vnd": 3050000000,
+    "team": {
+      "pm": "EMP012",
+      "tech_lead": "EMP009",
+      "members": ["EMP006", "EMP010", "EMP011", "EMP019"]
+    },
+    "tech_stack": ["FastAPI", "LangChain", "Weaviate", "PostgreSQL", "Docker", "AWS ECS"],
+    "progress_percent": 100,
+    "milestones": [
+      { "name": "Kick-off & Requirements gathering", "date": "2023-09-15", "status": "Done" },
+      { "name": "Model fine-tune tài chính ngân hàng", "date": "2023-11-30", "status": "Done" },
+      { "name": "UAT với team SaigonBank", "date": "2024-02-29", "status": "Done" },
+      { "name": "Go-live", "date": "2024-03-28", "status": "Done" }
+    ],
+    "kpi": {
+      "intent_accuracy": "94.7%",
+      "avg_handle_time_seconds": 8,
+      "customer_satisfaction": "4.4/5",
+      "monthly_queries_handled": 85000
+    }
+  },
+  {
+    "id": "PRJ004",
+    "name": "Internal AI Model Platform (MLOps)",
+    "code": "MLOPS-PLATFORM",
+    "description": "Nền tảng MLOps nội bộ để quản lý vòng đời model: training, versioning, serving, monitoring.",
+    "type": "Internal",
+    "status": "In Progress",
+    "phase": "Development",
+    "priority": "High",
+    "start_date": "2024-06-01",
+    "deadline": "2025-01-31",
+    "budget_vnd": 800000000,
+    "spent_vnd": 230000000,
+    "team": {
+      "pm": "EMP009",
+      "tech_lead": "EMP009",
+      "members": ["EMP010", "EMP011", "EMP017", "EMP020"]
+    },
+    "tech_stack": ["MLflow", "Kubeflow", "Triton Inference Server", "Prometheus", "Grafana", "MinIO", "Kubernetes"],
+    "progress_percent": 40,
+    "milestones": [
+      { "name": "Model registry hoàn thành", "date": "2024-08-31", "status": "Done" },
+      { "name": "Auto-training pipeline", "date": "2024-10-31", "status": "In Progress" },
+      { "name": "A/B testing framework", "date": "2024-12-15", "status": "Pending" },
+      { "name": "Dashboard monitoring hoàn chỉnh", "date": "2025-01-31", "status": "Pending" }
+    ],
+    "risks": []
+  }
+]

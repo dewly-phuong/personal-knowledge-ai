@@ -375,3 +375,65 @@ def sync_knowledge_base() -> str:
     
     return f"Manual knowledge base synchronization started. Task ID: {task_id}. You can track status with this ID."
 
+
+@tool
+def mongodb_query(collection: str, filter_json: str, projection_json: str = None, limit: int = 100) -> str:
+    """
+    Query structured company data from MongoDB. Use this when you need exact facts about employees, 
+    projects, bug tracking, KPIs, or organizational charts.
+    
+    Available Collections & Schemas:
+    1. 'employees': Information about staff.
+       - Fields: id, full_name, gender, date_of_birth, department, position, level, email, phone, start_date, employment_type, status, manager_id, office, avatar
+    2. 'projects': Technical and business projects.
+       - Fields: id, name, code, description, type, status, phase, priority, start_date, deadline, budget_vnd, spent_vnd, progress_percent, tech_stack (list), team (dict with pm, tech_lead, members), milestones (list), risks (list), kpi (dict)
+    3. 'bug_tracker': Reported software/system bugs.
+       - Fields: id, title, description, project_code, severity, priority, status, reporter_id, assignee_id, created_at, closed_at, resolution
+    4. 'kpi_okr': Department objectives and key results.
+       - Fields: id, department, year, quarter, objective, key_results (list with name, target, current, status, owner_id)
+    5. 'org_chart': Reporting relations and structures.
+       - Fields: id, employee_id, role, reports_to (id), team_size
+       
+    Args:
+        collection (str): One of the collections above ('employees', 'projects', 'bug_tracker', 'kpi_okr', 'org_chart').
+        filter_json (str): A valid JSON string representing the MongoDB query filter (e.g. '{"department": "Kỹ thuật"}').
+        projection_json (str, optional): A JSON string representing the projection fields to include/exclude.
+        limit (int, optional): Maximum number of documents to return. Defaults to 100. Max is 1000.
+    """
+    import json
+    # Restrict limit to avoid token blow-up, but allow up to 1000 for full-collection queries
+    limit = min(max(1, limit), 1000)
+    
+    try:
+        mongo_uri = os.getenv("MONGO_URI", "mongodb://localhost:27017/")
+        from pymongo import MongoClient
+        client = MongoClient(mongo_uri)
+        db = client["personal_knowledge_ai"]
+        
+        if collection not in ['employees', 'projects', 'bug_tracker', 'kpi_okr', 'org_chart']:
+            return f"Error: Collection '{collection}' is invalid. Allowed collections: employees, projects, bug_tracker, kpi_okr, org_chart."
+            
+        col = db[collection]
+        
+        # Parse query parameters
+        query_dict = json.loads(filter_json) if filter_json else {}
+        proj_dict = json.loads(projection_json) if projection_json else None
+        
+        results = list(col.find(query_dict, proj_dict).limit(limit))
+        
+        # Serialize ObjectIds/dates for JSON output
+        for r in results:
+            if "_id" in r:
+                r["_id"] = str(r["_id"])
+                
+        if not results:
+            return f"No records found in collection '{collection}' matching query: {filter_json}"
+            
+        return json.dumps(results, ensure_ascii=False, indent=2)
+        
+    except json.JSONDecodeError as je:
+        return f"JSON Syntax Error: Ensure filter_json and projection_json are valid JSON strings. Details: {je}"
+    except Exception as e:
+        return f"Error querying MongoDB: {e}"
+
+
