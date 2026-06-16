@@ -146,12 +146,17 @@ class MongoDBDataLayer(BaseDataLayer):
             elements = await elements_cursor.to_list(length=1000)
             elements_list = []
             for element in elements:
+                el_url = element.get("url")
+                # Plotly: serve stored content via our stable FastAPI endpoint
+                if element.get("type") == "plotly" and not el_url and element.get("_plotly_content"):
+                    el_url = f"/api/elements/{element['id']}/plotly"
+
                 element_dict = ElementDict(
                     id=element["id"],
                     threadId=thread_id,
                     type=element["type"],
                     chainlitKey=element.get("chainlitKey"),
-                    url=element.get("url"),
+                    url=el_url,
                     objectKey=element.get("objectKey"),
                     name=element["name"],
                     display=element["display"],
@@ -434,7 +439,15 @@ class MongoDBDataLayer(BaseDataLayer):
             db = self._get_db()
             doc = element.to_dict()
             doc["_id"] = doc["id"]
-            
+
+            # cl.Plotly stores the figure JSON in element.content (not in ElementDict).
+            # File storage is not configured, so we save it directly in the document
+            # and serve it back via /api/elements/{id}/plotly on reload.
+            if getattr(element, "type", None) == "plotly":
+                content = getattr(element, "content", None)
+                if content:
+                    doc["_plotly_content"] = content if isinstance(content, str) else content.decode()
+
             await db["cl_elements"].replace_one(
                 {"id": doc["id"]},
                 doc,

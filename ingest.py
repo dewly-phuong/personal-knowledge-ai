@@ -17,13 +17,15 @@ from app.services.compiler import WikiCompiler
 from app.services.embedding import get_embedding_service
 from app.services.qdrant_sync import QdrantSyncManager
 from app.core.redis import get_redis_client
-from app.services.mongodb_import import import_json_files_to_mongodb, import_csv_files_to_mongodb
+from app.services.mongodb_import import import_json_files_to_mongodb, import_csv_files_to_mongodb, import_xlsx_files_to_mongodb
+from app.services.markitdown_converter import convert_office_files
 
 def run_ingest_pipeline(
     source: str,
     dir_path: str = None,
     repo_name: str = None,
-    space_key: str = None
+    space_key: str = None,
+    office_only: bool = False,
 ) -> dict:
     """
     Core ingestion pipeline logic refactored into a reusable function.
@@ -37,7 +39,20 @@ def run_ingest_pipeline(
 
     # 1. Initialize the correct connector
     connector = None
-    if source == "local":
+    if source == "office":
+        # Convert .docx/.pptx/.pdf → .md in <dir_path>/converted/, then ingest ONLY those files.
+        if not dir_path:
+            raise ValueError("--dir is required for office source.")
+        print("Converting office/PDF files to Markdown via MarkItDown...")
+        conv_result = convert_office_files(src_dir=dir_path)
+        print(f"Conversion result: converted={len(conv_result['converted'])} "
+              f"skipped={len(conv_result['skipped'])} failed={len(conv_result['failed'])}")
+        for p in conv_result["failed"]:
+            print(f"  [failed] {p}")
+        converted_dir = os.path.join(dir_path, "converted")
+        connector = LocalFilesConnector(directory_path=converted_dir)
+
+    elif source == "local":
         if not dir_path:
             raise ValueError("--dir is required for local source.")
         connector = LocalFilesConnector(directory_path=dir_path)
@@ -53,6 +68,12 @@ def run_ingest_pipeline(
             print(f"CSV Import Result: {csv_res}")
         except Exception as e:
             print(f"Warning: Failed to import CSV files to MongoDB: {e}")
+        try:
+            print("Importing local XLSX files to MongoDB...")
+            xlsx_res = import_xlsx_files_to_mongodb(dir_path=dir_path)
+            print(f"XLSX Import Result: {xlsx_res}")
+        except Exception as e:
+            print(f"Warning: Failed to import XLSX files to MongoDB: {e}")
     elif source == "github":
         if not repo_name:
             raise ValueError("--repo is required for github source.")
@@ -69,7 +90,7 @@ def run_ingest_pipeline(
         if not url or not username or not token:
             raise ValueError("CONFLUENCE_URL, CONFLUENCE_USERNAME, and CONFLUENCE_API_TOKEN must be set in .env.")
         connector = ConfluenceConnector(url=url, username=username, token=token, space_key=space_key)
-    else:
+    elif source != "office":
         raise ValueError(f"Unsupported source type: {source}")
 
     # 2. Fetch documents
@@ -227,9 +248,10 @@ def main():
     parser = argparse.ArgumentParser(description="Ingest documentation into the Knowledge Graph and Wiki.")
     parser.add_argument(
         "--source",
-        choices=["local", "github", "confluence"],
+        choices=["local", "office", "github", "confluence"],
         required=True,
-        help="The source type to ingest from.",
+        help="The source type to ingest from. Use 'office' to convert .docx/.pptx/.pdf to "
+             "Markdown first and ingest only the converted files.",
     )
     # Source-specific arguments
     parser.add_argument("--dir", help="Directory path (required for local source).")

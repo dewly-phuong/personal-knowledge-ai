@@ -12,11 +12,11 @@ import re
 import datetime
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, BackgroundTasks, HTTPException
-from fastapi.responses import StreamingResponse
+from fastapi.responses import StreamingResponse, Response
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from typing import List, Tuple, Optional, Dict, Any
-from langchain_core.callbacks import BaseCallbackHandler
+from typing import List, Optional, Dict
+from langchain_core.messages import HumanMessage
 from chainlit.utils import mount_chainlit
 from apscheduler.schedulers.background import BackgroundScheduler
 
@@ -26,52 +26,6 @@ from app.agent import create_conversational_agent
 from app.memory.session_store import SessionStore
 from app.memory.history_manager import HistoryManager
 
-class QueueCallbackHandler(BaseCallbackHandler):
-    """Callback handler to stream LLM tokens, token usage, and tool executions into an asyncio.Queue."""
-    def __init__(self, queue: asyncio.Queue):
-        self.queue = queue
-        
-    def on_llm_new_token(self, token: str, **kwargs) -> None:
-        self.queue.put_nowait({"type": "token", "value": token})
-        
-    def on_llm_end(self, response, **kwargs) -> None:
-        try:
-            for generations in response.generations:
-                for gen in generations:
-                    if hasattr(gen, "message") and gen.message.usage_metadata:
-                        usage = gen.message.usage_metadata
-                        input_tokens = usage.get("input_tokens", 0)
-                        output_tokens = usage.get("output_tokens", 0)
-                        self.queue.put_nowait({
-                            "type": "usage", 
-                            "input": input_tokens, 
-                            "output": output_tokens
-                        })
-        except Exception as e:
-            print(f"Error extracting token usage: {e}")
-        
-    def on_llm_error(self, error: BaseException, **kwargs) -> None:
-        pass
-
-    def on_tool_start(self, serialized: Dict[str, Any], input_str: str, **kwargs) -> None:
-        tool_name = serialized.get("name", "Unknown Tool")
-        self.queue.put_nowait({
-            "type": "step_start",
-            "name": tool_name,
-            "input": input_str
-        })
-
-    def on_tool_end(self, output: Any, **kwargs) -> None:
-        self.queue.put_nowait({
-            "type": "step_end",
-            "output": str(output)
-        })
-
-    def on_tool_error(self, error: BaseException, **kwargs) -> None:
-        self.queue.put_nowait({
-            "type": "step_end",
-            "output": f"Tool execution error: {error}"
-        })
 
 
 def scheduled_sync_and_lint():
@@ -185,74 +139,96 @@ class ChatRequest(BaseModel):
     session_id: str
 
 async def chat_generator(query: str, session_id: str, history_manager: HistoryManager):
-    queue = asyncio.Queue()
-    cb = QueueCallbackHandler(queue)
-    
-    # Retrieve compressed history from store
     chat_history = await history_manager.get_context(session_id)
-        
-    agent = create_conversational_agent(temperature=0.0)
-    
-    # Run agent in background task
-    task = asyncio.create_task(
-        agent.ainvoke(
-            {"input": query, "chat_history": chat_history},
-            config={"callbacks": [cb]}
-        )
-    )
-    task.add_done_callback(lambda _: queue.put_nowait(None))
-    
+    agent = create_conversational_agent(temperature=1.0)
+
+    # create_agent expects {"messages": [*history, HumanMessage(query)]}
+    input_messages = list(chat_history) + [HumanMessage(content=query)]
+
     total_input = 0
     total_output = 0
-    
-    while True:
-        try:
-            item = await asyncio.wait_for(queue.get(), timeout=20.0)
-            if item is None:
-                break
-                
-            if isinstance(item, dict):
-                itype = item.get("type")
-                if itype == "token":
-                    yield f"data: {json.dumps({'type': 'token', 'token': item['value']})}\n\n"
-                elif itype == "step_start":
-                    yield f"data: {json.dumps({'type': 'step_start', 'name': item['name'], 'input': item['input']})}\n\n"
-                elif itype == "step_end":
-                    yield f"data: {json.dumps({'type': 'step_end', 'output': item['output']})}\n\n"
-                elif itype == "usage":
-                    total_input += item.get("input", 0)
-                    total_output += item.get("output", 0)
-                    
-            queue.task_done()
-        except asyncio.TimeoutError:
-            if task.done():
-                break
+    output = ""
+    new_messages = []
 
     try:
-        res = await task
-        output = res.get('output', '')
-        if isinstance(output, list):
-            output_str = ""
-            for part in output:
-                if isinstance(part, dict) and "text" in part:
-                    output_str += part["text"]
-                elif isinstance(part, str):
-                    output_str += part
-            output = output_str
-            
-        # Record costs in Redis
+        async for event in agent.astream_events(
+            {"messages": input_messages},
+            version="v2",
+        ):
+            kind = event.get("event")
+
+            if kind == "on_chat_model_stream":
+                chunk = event.get("data", {}).get("chunk")
+                if chunk and hasattr(chunk, "content"):
+                    content = chunk.content
+                    if isinstance(content, list):
+                        for part in content:
+                            if not isinstance(part, dict):
+                                continue
+                            ptype = part.get("type", "")
+                            if ptype == "text" and part.get("text"):
+                                yield f"data: {json.dumps({'type': 'token', 'token': part['text']})}\n\n"
+                            elif ptype == "thinking" and part.get("thinking"):
+                                yield f"data: {json.dumps({'type': 'thinking', 'token': part['thinking']})}\n\n"
+                    elif isinstance(content, str) and content:
+                        yield f"data: {json.dumps({'type': 'token', 'token': content})}\n\n"
+                # langchain-google-genai exposes thinking in additional_kwargs too
+                if chunk and hasattr(chunk, "additional_kwargs"):
+                    thinking_text = chunk.additional_kwargs.get("thinking", "")
+                    if thinking_text:
+                        yield f"data: {json.dumps({'type': 'thinking', 'token': thinking_text})}\n\n"
+
+            elif kind == "on_tool_start":
+                tool_name = event.get("name", "tool")
+                tool_input = event.get("data", {}).get("input", "")
+                if not isinstance(tool_input, str):
+                    tool_input = json.dumps(tool_input, ensure_ascii=False)
+                yield f"data: {json.dumps({'type': 'step_start', 'name': tool_name, 'input': tool_input})}\n\n"
+
+            elif kind == "on_tool_end":
+                raw_output = event.get("data", {}).get("output", "")
+                # LangGraph wraps tool returns in a ToolMessage object — extract .content
+                if hasattr(raw_output, "content"):
+                    tool_output = str(raw_output.content)
+                else:
+                    tool_output = str(raw_output)
+
+                if tool_output.startswith("CHART_JSON:"):
+                    chart_json = tool_output[len("CHART_JSON:"):]
+                    yield f"data: {json.dumps({'type': 'chart', 'chart_json': chart_json})}\n\n"
+                    # Store full JSON in step output so data layer persists it for page reload
+                    yield f"data: {json.dumps({'type': 'step_end', 'output': tool_output})}\n\n"
+                else:
+                    yield f"data: {json.dumps({'type': 'step_end', 'output': tool_output})}\n\n"
+
+            elif kind == "on_chat_model_end":
+                response = event.get("data", {}).get("output")
+                if response and hasattr(response, "usage_metadata") and response.usage_metadata:
+                    usage = response.usage_metadata
+                    total_input += usage.get("input_tokens", 0)
+                    total_output += usage.get("output_tokens", 0)
+
+            elif kind == "on_chain_end" and event.get("name") == "LangGraph":
+                # Final graph output — extract last AIMessage as the answer
+                result = event.get("data", {}).get("output", {})
+                msgs = result.get("messages", [])
+                if msgs:
+                    last = msgs[-1]
+                    content = getattr(last, "content", "")
+                    if isinstance(content, list):
+                        output = "".join(
+                            p["text"] if isinstance(p, dict) and "text" in p else str(p)
+                            for p in content
+                        )
+                    else:
+                        output = str(content)
+                    new_messages = msgs
+
         estimated_cost = accumulate_costs(total_input, total_output)
-        
-        # Append the user turn to MongoDB + Redis history
-        await history_manager.append_turn(session_id, query, output, res.get("intermediate_steps"))
-        
-        done_payload = {
-            'type': 'done',
-            'output': output,
-            'usage': {'input': total_input, 'output': total_output},
-            'cost': estimated_cost
-        }
-        yield f"data: {json.dumps(done_payload)}\n\n"
+        await history_manager.append_turn(session_id, query, output, new_messages)
+
+        yield f"data: {json.dumps({'type': 'done', 'output': output, 'usage': {'input': total_input, 'output': total_output}, 'cost': estimated_cost})}\n\n"
+
     except Exception as e:
         yield f"data: {json.dumps({'type': 'error', 'error': str(e)})}\n\n"
 
@@ -357,6 +333,17 @@ async def get_cost_stats():
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error accessing cost stats from Redis: {e}")
+
+@app.get("/api/elements/{element_id}/plotly")
+async def serve_plotly_element(element_id: str):
+    """Serves persisted Plotly figure JSON for a given element ID."""
+    from motor.motor_asyncio import AsyncIOMotorClient
+    client = AsyncIOMotorClient(os.getenv("MONGO_URI", "mongodb://localhost:27017/"))
+    db = client["personal_knowledge_ai"]
+    doc = await db["cl_elements"].find_one({"id": element_id})
+    if not doc or not doc.get("_plotly_content"):
+        raise HTTPException(status_code=404, detail="Plotly element content not found")
+    return Response(content=doc["_plotly_content"], media_type="application/json")
 
 @app.get("/api/health")
 async def health_check():

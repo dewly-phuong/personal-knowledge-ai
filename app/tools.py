@@ -4,8 +4,8 @@ import json
 import datetime
 import threading
 import uuid
-from typing import List, Dict, Any
-from langchain.tools import tool
+from typing import List, Dict, Any, Optional
+from langchain_core.tools import tool
 from rank_bm25 import BM25Okapi
 from qdrant_client import QdrantClient
 
@@ -436,6 +436,38 @@ def mongodb_query(collection: str, filter_json: str, projection_json: str = None
           "Design", "Documentation", "Domain & SSL", "Password Manager", "Project Management"
         - environment ENUM: "Production", "Staging", "All"
 
+    --- XLSX-backed (company_data.xlsx, snake_case field names) ---
+    10. 'recruitment_pipeline': Candidate hiring pipeline data (CSV + XLSX merged).
+        - Fields: candidate_id, full_name, position, department, level, source, apply_date,
+          cv_screen_date, cv_result, round1_date, round1_type, round1_result, round1_interviewer,
+          round2_date, round2_type, round2_result, round2_interviewer, round3_date, round3_type,
+          round3_result, round3_interviewer, offer_date, offer_salary_gross_vnd,
+          candidate_expected_vnd, offer_accepted, join_date, status, reject_reason, note
+        - status ENUM: "Active", "Offer Rejected", "Joined", "Rejected"
+
+    11. 'crm_customers': CRM customer accounts and contracts (CSV + XLSX merged).
+        - Fields: customer_id, company_name, industry, tier, contact_name, contact_title,
+          contact_email, contact_phone, contract_value_vnd, contract_start, contract_end,
+          status, mrr_vnd, products, account_manager, city, source, health_score,
+          last_activity_date, note
+        - tier ENUM: "Enterprise", "Business", "Starter"
+        - status ENUM: "Active", "Churned", "At Risk"
+
+    12. 'sprint_tickets': Jira-style sprint tickets and task tracking (CSV + XLSX merged).
+        - Fields: ticket_id, project, sprint, type, title, priority, assignee_id,
+          assignee_name, story_points, status, created_date, start_date, resolved_date,
+          label, epic, blocked, blocked_reason, review_url
+        - status ENUM: "Done", "In Progress", "To Do", "Blocked"
+        - priority ENUM: "High", "Medium", "Low", "Critical"
+
+    13. 'model_registry': Internal AI/ML model registry (CSV + XLSX merged).
+        - Fields: model_id, model_name, version, type, framework, task, language, base_model,
+          dataset_size, train_date, trained_by, f1_score, accuracy, precision, recall,
+          latency_p50_ms, latency_p99_ms, model_size_mb, serving_endpoint, deployment_env,
+          status, champion, experiment_id, note
+        - status ENUM: "Active", "Retired", "Staging"
+        - champion: True/False — whether this is the current production champion model
+
     Args:
         collection (str): One of the 13 collections listed above.
         filter_json (str): A valid JSON string for the MongoDB query filter.
@@ -487,3 +519,61 @@ def mongodb_query(collection: str, filter_json: str, projection_json: str = None
         return f"Error querying MongoDB: {e}"
 
 
+@tool
+def generate_chart(
+    chart_type: str,
+    title: str,
+    labels: List[str],
+    values: List[float],
+    x_label: str = "",
+    y_label: str = "",
+) -> str:
+    """
+    Render a visual chart (pie, bar, or line) directly in the chat.
+    Call this tool after you have already retrieved and aggregated the data.
+    Pass the final computed label strings and numeric values directly — do not pass
+    column names or field references.
+
+    Args:
+        chart_type: "pie", "bar", or "line"
+        title: Chart title
+        labels: List of category or x-axis label strings, e.g. ["Compute", "Database", "Storage"]
+        values: List of numeric values matching each label, e.g. [1500.0, 800.0, 300.0]
+        x_label: X-axis label (bar/line only, optional)
+        y_label: Y-axis label (bar/line only, optional)
+    """
+    try:
+        import plotly.graph_objects as go
+        import plotly.io as pio
+
+        chart_type = chart_type.lower().strip()
+        if chart_type == "pie":
+            fig = go.Figure(data=[go.Pie(
+                labels=labels,
+                values=values,
+                hole=0.3,
+                textinfo="label+percent",
+            )])
+        elif chart_type == "bar":
+            fig = go.Figure(data=[go.Bar(
+                x=labels,
+                y=values,
+                text=[f"{v:,.2f}" for v in values],
+                textposition="auto",
+            )])
+            fig.update_layout(xaxis_title=x_label or "", yaxis_title=y_label or "")
+        elif chart_type == "line":
+            fig = go.Figure(data=[go.Scatter(
+                x=labels,
+                y=values,
+                mode="lines+markers",
+                text=[f"{v:,.2f}" for v in values],
+            )])
+            fig.update_layout(xaxis_title=x_label or "", yaxis_title=y_label or "")
+        else:
+            return f"Error: Unsupported chart_type '{chart_type}'. Use 'pie', 'bar', or 'line'."
+
+        fig.update_layout(title=title, template="plotly_white")
+        return f"CHART_JSON:{pio.to_json(fig)}"
+    except Exception as e:
+        return f"Error generating chart: {e}"

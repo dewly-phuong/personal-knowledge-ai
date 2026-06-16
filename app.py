@@ -4,6 +4,8 @@ import chainlit as cl
 import logging
 import httpx
 import json
+import plotly.graph_objects as go
+import plotly.io as pio
 from typing import Optional
 from fastapi import Request, Response
 from chainlit.types import ThreadDict
@@ -77,31 +79,26 @@ async def start():
 
 @cl.on_chat_resume
 async def on_chat_resume(thread: ThreadDict):
-    """Handler function to resume a chat and restore backend history"""
+    """Sync backend history on resume. Charts are restored automatically by the data layer."""
     session_id = thread.get("id", cl.context.session.id)
     cl.user_session.set("session_id", session_id)
-    
-    # Parse the steps and build history payload
+
     sync_messages = []
     for step in thread["steps"]:
-        step_type = step["type"]
-        step_output = step["output"]
-        if not step_output:
-            continue
-            
-        if step_type == "user_message":
+        step_type = step.get("type", "")
+        step_output = step.get("output", "")
+        if step_type == "user_message" and step_output:
             sync_messages.append({"role": "user", "content": step_output})
-        elif step_type == "assistant_message":
+        elif step_type == "assistant_message" and step_output:
             sync_messages.append({"role": "assistant", "content": step_output})
-            
-    # Sync with FastAPI backend
+
     api_url = f"http://localhost:8000/api/chat/{session_id}/sync"
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
             await client.post(api_url, json={"messages": sync_messages})
     except Exception as e:
         logger.warning(f"Failed to sync chat history on resume: {e}")
-        
+
     user = cl.user_session.get("user")
     logger.info(f"{user.identifier if user else 'Guest'} has resumed chat")
 
@@ -153,81 +150,115 @@ def resolve_citations(text: str) -> str:
 async def on_message(message: cl.Message):
     session_id = cl.user_session.get("session_id")
     url = "http://localhost:8000/api/chat"
-    
-    # Initialize main message
-    streamed_msg = cl.Message(content="")
-    await streamed_msg.send()
-    
-    payload = {
-        "query": message.content,
-        "session_id": session_id
-    }
-    
-    # Keep track of active Chainlit steps (tool calls)
-    active_steps = {}
-    
+    payload = {"query": message.content, "session_id": session_id}
+
+    active_steps: dict = {}
+    thinking_buffer: list[str] = []  # accumulate thinking tokens; flush as a single collapsed step
+    streamed_msg: cl.Message | None = None
+
+    async def flush_thinking():
+        """Send all buffered thinking content as a single non-streaming collapsed step."""
+        nonlocal thinking_buffer
+        if not thinking_buffer:
+            return
+        step = cl.Step(name="💭 Suy nghĩ", type="run")
+        step.output = "".join(thinking_buffer)
+        await step.send()
+        thinking_buffer = []
+
     try:
-        async with httpx.AsyncClient(timeout=90.0) as client:
+        async with httpx.AsyncClient(timeout=120.0) as client:
             async with client.stream("POST", url, json=payload) as response:
                 if response.status_code != 200:
-                    streamed_msg.content = f"Error from server: HTTP {response.status_code}"
-                    await streamed_msg.update()
+                    await cl.Message(content=f"Error from server: HTTP {response.status_code}").send()
                     return
-                    
+
                 async for line in response.aiter_lines():
-                    if line.startswith("data: "):
-                        data_str = line[6:]
-                        try:
-                            data = json.loads(data_str)
-                            dtype = data.get("type")
-                            
-                            if dtype == "step_start":
-                                # 1. Render active tool thinking block
-                                step_name = data.get("name")
-                                step_input = data.get("input")
-                                
-                                step = cl.Step(name=step_name, type="tool", parent_id=message.id)
-                                step.input = step_input
-                                await step.send()
-                                active_steps[step_name] = step
-                                
-                            elif dtype == "step_end":
-                                # 2. Update and close active thinking block
-                                step_name = list(active_steps.keys())[-1] if active_steps else None
-                                if step_name:
-                                    step = active_steps.pop(step_name)
-                                    step.output = data.get("output", "")
-                                    await step.update()
-                                    
-                            elif dtype == "token":
-                                # 3. Stream text tokens to main message
-                                token_val = data["token"]
-                                if isinstance(token_val, list):
-                                    text_token = ""
-                                    for part in token_val:
-                                        if isinstance(part, dict) and "text" in part:
-                                            text_token += part["text"]
-                                        elif isinstance(part, str):
-                                            text_token += part
-                                    token_val = text_token
-                                elif isinstance(token_val, dict) and "text" in token_val:
-                                    token_val = token_val["text"]
-                                await streamed_msg.stream_token(token_val)
-                                
-                            elif dtype == "done":
-                                # 4. Resolve wiki links/citations to clickable remote URLs
-                                final_output = data.get("output", "")
-                                resolved_output = resolve_citations(final_output)
-                                streamed_msg.content = resolved_output
+                    if not line.startswith("data: "):
+                        continue
+                    try:
+                        data = json.loads(line[6:])
+                        dtype = data.get("type")
+
+                        # ── 1. Thinking — buffer silently, emit as collapsed toggle later ─
+                        if dtype == "thinking":
+                            thinking_buffer.append(data["token"])
+
+                        # ── 2. Tool call start — flush thinking first ─────────────────────
+                        elif dtype == "step_start":
+                            await flush_thinking()
+                            step_name = data.get("name")
+                            # No parent_id: tool steps are top-level timeline items so they
+                            # appear above the lazily-created response message.
+                            step = cl.Step(name=step_name, type="tool")
+                            step.input = data.get("input", "")
+                            await step.send()
+                            active_steps[step_name] = step
+
+                        # ── 3. Tool call end ──────────────────────────────────────────────
+                        elif dtype == "step_end":
+                            last_name = list(active_steps.keys())[-1] if active_steps else None
+                            if last_name:
+                                step = active_steps.pop(last_name)
+                                raw_out = data.get("output", "")
+                                step.output = "Chart generated." if raw_out.startswith("CHART_JSON:") else raw_out
+                                await step.update()
+
+                        # ── 4. Chart — send immediately as own message BEFORE response ────
+                        elif dtype == "chart":
+                            await flush_thinking()
+                            try:
+                                fig = pio.from_json(data["chart_json"])
+                                await cl.Message(
+                                    content="📊",
+                                    elements=[cl.Plotly(name="chart", figure=fig, display="inline", size="large")],
+                                ).send()
+                            except Exception as chart_err:
+                                print(f"Error rendering chart: {chart_err}")
+
+                        # ── 5. Text token — lazy-create response message (always LAST) ────
+                        elif dtype == "token":
+                            await flush_thinking()
+                            if streamed_msg is None:
+                                streamed_msg = cl.Message(content="")
+                                await streamed_msg.send()
+                            token_val = data["token"]
+                            if isinstance(token_val, list):
+                                token_val = "".join(
+                                    p["text"] if isinstance(p, dict) and "text" in p else str(p)
+                                    for p in token_val
+                                )
+                            elif isinstance(token_val, dict) and "text" in token_val:
+                                token_val = token_val["text"]
+                            await streamed_msg.stream_token(token_val)
+
+                        # ── 6. Done — resolve citations and finalise ──────────────────────
+                        elif dtype == "done":
+                            await flush_thinking()
+                            final_output = data.get("output", "")
+                            resolved = resolve_citations(final_output)
+                            if streamed_msg is not None:
+                                streamed_msg.content = resolved
                                 await streamed_msg.update()
-                                
-                            elif dtype == "error":
-                                await streamed_msg.stream_token(f"\n[Error: {data['error']}]")
-                                
-                        except Exception as json_err:
-                            print(f"Error parsing chunk: {json_err} for line: {line}")
-                            
-        await streamed_msg.update()
-        
+                            else:
+                                streamed_msg = cl.Message(content=resolved)
+                                await streamed_msg.send()
+
+                        # ── 7. Error ──────────────────────────────────────────────────────
+                        elif dtype == "error":
+                            err = data.get("error", "Unknown error")
+                            if streamed_msg:
+                                await streamed_msg.stream_token(f"\n\n⚠️ {err}")
+                            else:
+                                await cl.Message(content=f"⚠️ {err}").send()
+
+                    except json.JSONDecodeError as json_err:
+                        print(f"Error parsing SSE chunk: {json_err} — line: {line[:120]}")
+
+        if streamed_msg:
+            await streamed_msg.update()
+
     except Exception as e:
-        await cl.Message(content=f"Error connecting to chat API: {e}. Hãy đảm bảo server FastAPI đang chạy tại localhost:8000.").send()
+        await cl.Message(
+            content=f"Error connecting to chat API: {e}. Hãy đảm bảo server FastAPI đang chạy tại localhost:8000."
+        ).send()
