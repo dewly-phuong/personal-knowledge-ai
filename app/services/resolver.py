@@ -1,6 +1,7 @@
 import google.generativeai as genai
 from app.models.graph import Entity, ResolvedClusters, Cluster
 
+
 class EntityResolver:
     def __init__(self, api_key: str, model_name: str = "gemini-2.5-pro"):
         """
@@ -32,7 +33,9 @@ class EntityResolver:
             else:
                 # Append description if different
                 if entity.description not in unique_entities[entity.name].description:
-                    unique_entities[entity.name].description += f" / {entity.description}"
+                    unique_entities[
+                        entity.name
+                    ].description += f" / {entity.description}"
 
         entity_list_str = "\n".join(
             [

@@ -1,183 +1,220 @@
-# Personal Knowledge AI Assistant — Onboarding & Operations Guide
+# Personal Knowledge AI Assistant
 
-Welcome to the Personal Knowledge AI Assistant team. This guide covers how to set up, operate, debug, and extend the Knowledge Graph agent.
-
----
-
-## 🏗️ System Architecture
-
-The project implements a **Dual-Model LLM Wiki Pattern**:
-1.  **Layer 1 (Raw Sources):** Immutable documentation files pulled from GitHub, Confluence, or local directories.
-2.  **Layer 2 (Compiled Wiki + Graph):** Raw text is extracted (entities & relations using `gemini-2.0-flash`), resolved into canonical names (using `gemini-2.5-pro`), compiled into interlinked markdown pages in `wiki/`, and stored in a NetworkX knowledge graph (`graph/graph.pkl`).
-3.  **Layer 3 (Agent & UI):** A LangChain conversational agent (`gemini-2.5-pro`) uses tools to query the compiled wiki (hybrid BM25 + Qdrant search) and traverse the graph to answer multi-hop user queries inside a Chainlit UI.
+An internal knowledge-graph-powered AI assistant for Vietnamese-language enterprise use. It ingests documents from multiple sources (local files, GitHub, Confluence), builds a compiled wiki and a NetworkX knowledge graph, and exposes a Chainlit chat UI backed by a Gemini 2.5 Pro agent.
 
 ---
 
-## ⚡ Quickstart
+## Architecture
 
-### 1. Prerequisite: Local Services
-Ensure Redis is running locally on port `6379` (used for cache invalidation, background ingestion task status tracking, and LLM cost monitoring):
-```bash
-docker run -d --name redis-local -p 6379:6379 redis
+```
+┌─────────────────────────────────────────────────────────────┐
+│  Layer 1 — Raw Sources                                       │
+│  Local files · GitHub repos · Confluence spaces             │
+│  Office/PDF (auto-converted to Markdown via MarkItDown)     │
+└────────────────────────┬────────────────────────────────────┘
+                         │ ingest.py
+┌────────────────────────▼────────────────────────────────────┐
+│  Layer 2 — Knowledge Store                                   │
+│  • Entity extraction  (gemini-2.5-flash)                     │
+│  • Entity resolution  (gemini-2.5-pro)                       │
+│  • Compiled wiki      wiki/*.md  (markdown pages)           │
+│  • Knowledge graph    graph/graph.pkl  (NetworkX)           │
+│  • Vector index       Qdrant Cloud  (768-dim embeddings)    │
+│  • Structured data    MongoDB  (JSON / CSV / XLSX)          │
+└────────────────────────┬────────────────────────────────────┘
+                         │ main.py (FastAPI + LangChain agent)
+┌────────────────────────▼────────────────────────────────────┐
+│  Layer 3 — Agent & UI                                        │
+│  • Gemini 2.5 Pro agent with 8 tools                        │
+│  • Real-time SSE streaming via FastAPI                      │
+│  • Chainlit chat UI  →  /chat                               │
+│  • Redis: session cache · cost stats · ingest task status   │
+│  • MongoDB: chat history · Chainlit persistence             │
+└─────────────────────────────────────────────────────────────┘
 ```
 
-### 2. Configure Environment Variables
-Create a `.env` file at the project root based on `.env.example`:
+### Key modules
+
+| Path | Responsibility |
+|---|---|
+| `main.py` | FastAPI app, lifespan, SSE route, API routes |
+| `app.py` | Chainlit event handlers and UI streaming |
+| `ingest.py` | Ingestion CLI and pipeline orchestration |
+| `app/agent.py` | LangChain agent factory (Gemini + tools) |
+| `app/tools.py` | 8 LangChain tools — wiki search, graph traverse, MongoDB query, charts… |
+| `app/services/wiki_search.py` | `WikiSearchService` — BM25 + Qdrant hybrid search |
+| `app/services/cost_tracker.py` | `CostTracker` — per-call cost accounting in Redis |
+| `app/services/graph_store.py` | `GraphStore` singleton wrapping NetworkX `MultiDiGraph` |
+| `app/services/compiler.py` | `WikiCompiler` — LLM-powered wiki page generation |
+| `app/services/extractor.py` | `GraphExtractor` — entity + relation extraction |
+| `app/services/resolver.py` | `EntityResolver` — canonical entity clustering |
+| `app/services/embedding.py` | `GeminiEmbeddingService` / `ModernBERTEmbeddingService` factory |
+| `app/services/qdrant_sync.py` | `QdrantSyncManager` — upserts wiki pages to Qdrant |
+| `app/services/mongodb_import.py` | JSON / CSV / XLSX importers with hash-based dedup |
+| `app/services/markitdown_converter.py` | Office/PDF → Markdown conversion |
+| `app/services/connectors/` | `BaseConnector` + Local / GitHub / Confluence implementations |
+| `app/memory/session_store.py` | Redis-primary / MongoDB-fallback chat history store |
+| `app/memory/history_manager.py` | Facade over `SessionStore` used by the API layer |
+| `app/memory/mongodb_data_layer.py` | Chainlit `BaseDataLayer` backed by MongoDB |
+| `app/core/redis.py` | Singleton Redis client |
+
+---
+
+## Quickstart
+
+### 1. Prerequisites
+
+```bash
+# Redis (session cache, cost stats, ingest task status)
+docker run -d --name redis-local -p 6379:6379 redis
+
+# MongoDB (chat history, structured data, Chainlit persistence)
+docker run -d --name mongo-local -p 27017:27017 mongo
+```
+
+### 2. Environment variables
+
+Create `.env` at the project root:
+
 ```bash
 GOOGLE_API_KEY="AIzaSy..."
-CHAINLIT_AUTH_SECRET="your-generated-secret"
-QDRANT_URL="https://your-qdrant-cluster.io"
+CHAINLIT_AUTH_SECRET="your-secret"
+MONGO_URI="mongodb://localhost:27017/"
+REDIS_HOST="localhost"
+REDIS_PORT="6379"
+
+# Optional — Qdrant vector search
+QDRANT_URL="https://your-cluster.qdrant.io"
 QDRANT_API_KEY="your-qdrant-key"
+
+# Optional — GitHub ingestion
 GITHUB_TOKEN="your-github-token"
+
+# Optional — Confluence ingestion
 CONFLUENCE_URL="https://your-domain.atlassian.net"
 CONFLUENCE_USERNAME="user@domain.com"
 CONFLUENCE_API_TOKEN="your-confluence-token"
 ```
 
-### 3. Startup the Server
-The FastAPI backend and Chainlit UI run together in a unified process:
-```bash
-# Activate the virtual environment
-source .venv/bin/activate
+### 3. Start the server
 
-# Start uvicorn
+```bash
+source .venv/bin/activate
 uvicorn main:app --port 8000
 ```
-*   **FastAPI API Endpoints:** `http://127.0.0.1:8000`
-*   **Chainlit Chat UI:** `http://127.0.0.1:8000/chat` (Login: `admin` / `admin`)
+
+- **FastAPI API:** `http://localhost:8000`
+- **Chainlit UI:** `http://localhost:8000/chat` (login: `admin` / `admin`)
 
 ---
 
-## 📥 Manual Ingestion
+## Ingestion
 
-You can trigger the ingestion pipeline manually via the `ingest.py` CLI tool. It tracks modified times and performs incremental updates.
+The ingestion pipeline runs incrementally — only new or changed files are processed.
 
-### A. Local Files Ingestion
-To index files from `raw/local`:
 ```bash
+# Local files (also imports JSON/CSV/XLSX into MongoDB)
 python ingest.py --source local --dir raw/local
-```
 
-### B. GitHub Repository Ingestion
-To index a repository's markdown files (requires `GITHUB_TOKEN` in `.env`):
-```bash
+# Office/PDF files (converted to Markdown first, then ingested)
+python ingest.py --source office --dir raw/local
+
+# GitHub repository (README.md + docs/*.md)
 python ingest.py --source github --repo owner/repo
-```
 
-### C. Confluence Ingestion
-To index pages from a Confluence Space (requires Confluence configuration in `.env`):
-```bash
+# Confluence space
 python ingest.py --source confluence --space SPACE_KEY
 ```
 
----
-
-## 🩺 Health Auditing (Linting)
-
-To check the consistency and health of the compiled Wiki (identifying orphan pages, missing backlinks, `[CONFLICT]` tags, or stale content):
-
-1.  **Scheduled Linting:** The system automatically runs a sync and health audit once every 24 hours via a background scheduler.
-2.  **Manual Execution:** Run the lint tool from your python environment:
-    ```bash
-    python -c "from app.tools import lint_wiki; print(lint_wiki.invoke({}))"
-    ```
-    This will compile a report and output the current Wiki Health Score. The report is automatically saved to `wiki/health_report.md`.
+A daily background job automatically re-runs local ingestion and a wiki health audit at server startup (every 24 hours).
 
 ---
 
-## 🛠️ Debugging Graph Traversal
+## Agent Tools
 
-If the agent returns incorrect service dependencies or relationship mappings, you can inspect and modify the NetworkX MultiDiGraph manually.
+| Tool | When to use |
+|---|---|
+| `get_current_time` | Current date/time |
+| `wiki_search` | Policy docs, procedures, compiled wiki pages (BM25 + Qdrant hybrid) |
+| `graph_traverse` | Service dependencies, ownership, pipeline flows (2-hop graph) |
+| `mongodb_query` | Exact company data — employees, payroll, KPIs, bugs, revenue… |
+| `generate_chart` | Render pie/bar/line charts from aggregated data |
+| `ingest_source` | Trigger background ingestion for a source |
+| `sync_knowledge_base` | Manually refresh the local knowledge base |
+| `lint_wiki` | Audit wiki for orphans, conflicts, broken links |
 
-The graph is persisted as a serialized pickle file at `graph/graph.pkl`.
+---
 
-### Inspecting the Graph
-Use the following Python snippet to view the nodes and edges:
+## API Reference
+
+| Method | Path | Description |
+|---|---|---|
+| `POST` | `/api/chat` | SSE stream — agent response with tool steps |
+| `GET` | `/api/chat/{session_id}` | Retrieve chat history for a session |
+| `DELETE` | `/api/chat/{session_id}` | Clear chat history for a session |
+| `POST` | `/api/chat/{session_id}/sync` | Overwrite chat history (used on resume) |
+| `POST` | `/api/ingest` | Trigger background ingestion |
+| `GET` | `/api/ingest/{task_id}` | Poll ingestion task status |
+| `GET` | `/api/graph/{entity}` | 2-hop subgraph for an entity (JSON) |
+| `GET` | `/api/cost` | Accumulated LLM cost stats (today + month) |
+| `GET` | `/api/health` | Redis + MongoDB connectivity check |
+
+---
+
+## Health Audit (Wiki Lint)
+
+```bash
+python -c "from app.tools import lint_wiki; print(lint_wiki.invoke({}))"
+```
+
+The report is also automatically saved to `wiki/health_report.md` after each daily sync.
+
+---
+
+## Debugging the Knowledge Graph
+
 ```python
 import pickle
 
 with open("graph/graph.pkl", "rb") as f:
-    graph = pickle.load(f)
+    g = pickle.load(f)
 
-print("Nodes in Graph:")
-for node, data in graph.nodes(data=True):
+# Inspect nodes
+for node, data in g.nodes(data=True):
     print(f"  {node} ({data.get('type')}) - {data.get('description')}")
 
-print("\nEdges (Relationships):")
-for u, v, key, data in graph.edges(keys=True, data=True):
+# Inspect edges
+for u, v, key, data in g.edges(keys=True, data=True):
     print(f"  ({u}) --[{data.get('predicate')}]--> ({v})")
 ```
 
-### Manually Adding or Modifying a Relationship
-If the resolver incorrectly clustered an entity or missed a dependency, you can modify `graph.pkl` programmatically:
 ```python
-import pickle
+# Manually add or remove relationships
 from app.services.graph_store import GraphStore
 
 store = GraphStore()
-
-# Manually add an edge (relationship)
 store.graph.add_edge("auth-service", "user-db", predicate="depends on")
-
-# Manually remove an incorrect edge
-if store.graph.has_edge("auth-service", "payment-service"):
-    store.graph.remove_edge("auth-service", "payment-service")
-
-# Save changes back to graph.pkl
 store.save()
 ```
 
 ---
 
-## 🔌 How to Add a New Connector
+## Adding a New Connector
 
-All document connectors inherit from `BaseConnector` defined in `app/services/connectors/base.py`.
-
-### 1. Implement the Connector Class
-Create a new file (e.g., `app/services/connectors/notion.py`) and implement the abstract `fetch_documents()` method:
+1. Create `app/services/connectors/my_source.py` implementing `BaseConnector.fetch_documents()`.
+2. Export it in `app/services/connectors/__init__.py`.
+3. Add a branch in `ingest.py::_build_connector()` for the new source name.
+4. Add the source name to the `--source` choices in `ingest.py::main()`.
 
 ```python
-import os
+# app/services/connectors/my_source.py
 from app.services.connectors.base import BaseConnector, Document
 
-class NotionConnector(BaseConnector):
-    def __init__(self, token: str, page_id: str):
+class MySourceConnector(BaseConnector):
+    def __init__(self, token: str):
         self.token = token
-        self.page_id = page_id
 
     def fetch_documents(self) -> list[Document]:
-        documents = []
-        # 1. Fetch data from Notion API using self.token and self.page_id
-        # 2. Map the results into Document models:
-        # doc = Document(
-        #     content="Page text content here...",
-        #     source_url="https://notion.so/page-url",
-        #     path="notion/page_title.md",
-        #     source_type="local",  # or map dynamically
-        #     last_modified="2026-06-11T12:00:00Z"
-        # )
-        # documents.append(doc)
-        return documents
+        # fetch and return Document objects
+        return []
 ```
-
-### 2. Register in the Ingestion Script
-Open `ingest.py` and import your new connector:
-```diff
-from app.services.connectors import (
-    LocalFilesConnector,
-    GitHubConnector,
-    ConfluenceConnector,
-+   NotionConnector,
-)
-```
-
-Add your source configuration under `run_ingest_pipeline()`:
-```python
-    elif source == "notion":
-        token = os.getenv("NOTION_TOKEN")
-        page_id = os.getenv("NOTION_PAGE_ID")
-        if not token or not page_id:
-            raise ValueError("NOTION_TOKEN and NOTION_PAGE_ID must be set.")
-        connector = NotionConnector(token=token, page_id=page_id)
-```
-And add `"notion"` to the CLI parser arguments at the bottom of the script.

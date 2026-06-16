@@ -3,6 +3,7 @@ import redis
 
 _redis_client = None
 
+
 def get_redis_client() -> redis.Redis:
     """
     Returns a singleton Redis client instance.
@@ -18,6 +19,6 @@ def get_redis_client() -> redis.Redis:
             port=port,
             db=db,
             decode_responses=True,
-            socket_timeout=5.0  # Safe timeout for fallback detection
+            socket_timeout=5.0,  # Safe timeout for fallback detection
         )
     return _redis_client

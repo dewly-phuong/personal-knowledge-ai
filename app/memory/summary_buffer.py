@@ -1,7 +1,13 @@
 import os
 import logging
 from typing import List
-from langchain_core.messages import BaseMessage, HumanMessage, AIMessage, SystemMessage, ToolMessage
+from langchain_core.messages import (
+    BaseMessage,
+    HumanMessage,
+    AIMessage,
+    SystemMessage,
+    ToolMessage,
+)
 from langchain_google_genai import ChatGoogleGenerativeAI
 
 logger = logging.getLogger(__name__)
@@ -16,6 +22,7 @@ Hội thoại:
 Tóm tắt:"""
 
 MAX_RECENT_TURNS = 3
+
 
 def _to_turns(messages: List[BaseMessage]) -> List[dict]:
     """Convert flat message list into a list of {human, ai} pairs, including tool outputs."""
@@ -33,16 +40,21 @@ def _to_turns(messages: List[BaseMessage]) -> List[dict]:
                     if messages[j].content:
                         ai_texts.append(messages[j].content)
                     if hasattr(messages[j], "tool_calls") and messages[j].tool_calls:
-                        tool_names = ", ".join(tc.get("name", "") for tc in messages[j].tool_calls)
+                        tool_names = ", ".join(
+                            tc.get("name", "") for tc in messages[j].tool_calls
+                        )
                         ai_texts.append(f"[Calls tools: {tool_names}]")
                 elif isinstance(messages[j], ToolMessage):
-                    ai_texts.append(f"[Tool {messages[j].name} output: {messages[j].content[:100]}...]")
+                    ai_texts.append(
+                        f"[Tool {messages[j].name} output: {messages[j].content[:100]}...]"
+                    )
                 j += 1
             turns.append({"human": human_text, "ai": "\n".join(ai_texts)})
             i = j
         else:
             i += 1
     return turns
+
 
 async def compress_history(
     messages: List[BaseMessage],
@@ -58,7 +70,6 @@ async def compress_history(
         return messages
 
     old_turns = turns[:-max_recent]
-    recent_turns = turns[-max_recent:]
 
     # Construct conversation text for summarization
     conversation_text = ""
@@ -78,10 +89,17 @@ async def compress_history(
         response = await llm.ainvoke(prompt)
         summary_text = response.content
         if isinstance(summary_text, list):
-            summary_text = " ".join([part.get("text", "") if isinstance(part, dict) else str(part) for part in summary_text])
-        
-        compressed = [SystemMessage(content=f"[Tóm tắt hội thoại trước]: {summary_text}")]
-        
+            summary_text = " ".join(
+                [
+                    part.get("text", "") if isinstance(part, dict) else str(part)
+                    for part in summary_text
+                ]
+            )
+
+        compressed = [
+            SystemMessage(content=f"[Tóm tắt hội thoại trước]: {summary_text}")
+        ]
+
         # Find the starting index of the last max_recent turns by counting HumanMessages
         start_idx = 0
         human_count = 0
@@ -91,11 +109,11 @@ async def compress_history(
                 if human_count == max_recent:
                     start_idx = idx
                     break
-        
+
         recent_messages = messages[start_idx:]
         compressed.extend(recent_messages)
         return compressed
-        
+
     except Exception as e:
         logger.error(f"Error compressing history: {e}")
         # If compression fails, fall back to returning raw history to avoid blocking the user

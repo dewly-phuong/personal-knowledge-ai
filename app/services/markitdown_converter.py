@@ -65,16 +65,20 @@ def convert_office_files(
     out_path.mkdir(parents=True, exist_ok=True)
 
     mongo_uri = mongo_uri or os.getenv("MONGO_URI", "mongodb://localhost:27017/")
-    meta_col  = _get_metadata_col(mongo_uri)
+    meta_col = _get_metadata_col(mongo_uri)
 
     md = MarkItDown()
 
     converted, skipped, failed = [], [], []
 
-    # Only scan top-level of src_dir (not csv/ or converted/ subfolders)
+    # Walk the entire src_dir tree; skip csv/ and converted/ subfolders.
+    _SKIP_DIRS = {"csv", "converted"}
     candidates = [
-        f for f in src_path.iterdir()
-        if f.is_file() and f.suffix.lower() in SUPPORTED_EXTENSIONS
+        f
+        for f in src_path.rglob("*")
+        if f.is_file()
+        and f.suffix.lower() in SUPPORTED_EXTENSIONS
+        and not any(part in _SKIP_DIRS for part in f.parts)
     ]
 
     for src_file in sorted(candidates):
@@ -106,11 +110,15 @@ def convert_office_files(
             # Persist hash so unchanged files are skipped next run
             meta_col.update_one(
                 {"filepath": meta_key},
-                {"$set": {
-                    "src_hash":     src_hash,
-                    "out_path":     str(out_file),
-                    "converted_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
-                }},
+                {
+                    "$set": {
+                        "src_hash": src_hash,
+                        "out_path": str(out_file),
+                        "converted_at": datetime.datetime.now(
+                            datetime.timezone.utc
+                        ).isoformat(),
+                    }
+                },
                 upsert=True,
             )
             converted.append(str(out_file))

@@ -1,6 +1,7 @@
 import google.generativeai as genai
 from app.models.graph import ExtractedGraph
 
+
 class GraphExtractor:
     def __init__(self, api_key: str):
         """

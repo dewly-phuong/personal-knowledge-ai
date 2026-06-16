@@ -3,8 +3,11 @@ import re
 import datetime
 import google.generativeai as genai
 
+
 class WikiCompiler:
-    def __init__(self, api_key: str, wiki_dir: str = "wiki", model_name: str = "gemini-2.5-flash"):
+    def __init__(
+        self, api_key: str, wiki_dir: str = "wiki", model_name: str = "gemini-2.5-flash"
+    ):
         """
         api_key: Gemini API Key
         wiki_dir: Root directory of wiki files (default: wiki)
@@ -13,7 +16,7 @@ class WikiCompiler:
         self.wiki_dir = wiki_dir
         genai.configure(api_key=api_key)
         self.model = genai.GenerativeModel(model_name)
-        
+
         # Read WIKI_SCHEMA if it exists in the workspace
         schema_path = "WIKI_SCHEMA.md"
         if os.path.exists(schema_path):
@@ -47,7 +50,7 @@ class WikiCompiler:
             "PERSON": "person",
             "ORGANIZATION": "person",
         }.get(entity_type, "concepts")
-        
+
         return os.path.join(self.wiki_dir, type_folder, f"{slug}.md")
 
     def compile_entity_page(
@@ -63,7 +66,7 @@ class WikiCompiler:
         """
         file_path = self._get_entity_path(entity_name, entity_type)
         existing_content = ""
-        
+
         if os.path.exists(file_path):
             try:
                 with open(file_path, "r", encoding="utf-8") as f:
@@ -72,7 +75,7 @@ class WikiCompiler:
                 print(f"Error reading existing page {file_path}: {e}")
 
         date_str = datetime.datetime.now(datetime.timezone.utc).isoformat()
-        
+
         prompt = f"""You are a disciplined wiki maintainer. Read and strictly follow the schema:
 <wiki_schema>
 {self.schema_content}
@@ -114,7 +117,7 @@ Output only the complete, valid raw markdown code block contents (no surrounding
         try:
             response = self.model.generate_content(prompt)
             content = response.text.strip()
-            
+
             # Clean any surrounding triple backticks the model might output
             if content.startswith("```markdown"):
                 content = content[11:]
@@ -128,7 +131,7 @@ Output only the complete, valid raw markdown code block contents (no surrounding
             os.makedirs(os.path.dirname(file_path), exist_ok=True)
             with open(file_path, "w", encoding="utf-8") as f:
                 f.write(content)
-            
+
             return file_path, content
         except Exception as e:
             print(f"Error compiling entity page {entity_name}: {e}")
@@ -139,7 +142,7 @@ Output only the complete, valid raw markdown code block contents (no surrounding
         Scans the wiki folder and programmatically generates the wiki/index.md page.
         """
         index_path = os.path.join(self.wiki_dir, "index.md")
-        
+
         categories = {
             "services": "Services (Microservices, Databases)",
             "pipelines": "Pipelines (Cron jobs, Workflows)",
@@ -147,29 +150,27 @@ Output only the complete, valid raw markdown code block contents (no surrounding
             "decisions": "Architecture Decisions (ADRs)",
             "person": "People & Teams",
         }
-        
+
         lines = [
             "# Internal Engineering Wiki Index\n",
             "Welcome to the compiled project knowledge base.\n",
         ]
-        
+
         for folder, label in categories.items():
             folder_path = os.path.join(self.wiki_dir, folder)
             if os.path.exists(folder_path):
-                files = sorted([f for f in os.listdir(folder_path) if f.endswith(".md")])
+                files = sorted(
+                    [f for f in os.listdir(folder_path) if f.endswith(".md")]
+                )
                 if files:
                     lines.append(f"## {label}")
                     for file in files:
                         file_path = os.path.join(folder_path, file)
-                        title = file[:-3].replace("-", " ").title()
                         desc = ""
                         try:
                             with open(file_path, "r", encoding="utf-8") as f:
                                 text = f.read()
-                                h1_match = re.search(r"^#\s+(.+)$", text, re.MULTILINE)
-                                if h1_match:
-                                    title = h1_match.group(1).strip()
-                                
+
                                 body = text
                                 if text.startswith("---"):
                                     parts = text.split("---", 2)
@@ -188,14 +189,14 @@ Output only the complete, valid raw markdown code block contents (no surrounding
                                         break
                         except Exception:
                             pass
-                        
+
                         relative_wiki_link = f"[[wiki/{folder}/{file[:-3]}]]"
                         if desc:
                             lines.append(f"* {relative_wiki_link} - {desc}")
                         else:
                             lines.append(f"* {relative_wiki_link}")
                     lines.append("")
-        
+
         os.makedirs(self.wiki_dir, exist_ok=True)
         with open(index_path, "w", encoding="utf-8") as f:
             f.write("\n".join(lines))

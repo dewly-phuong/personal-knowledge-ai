@@ -4,16 +4,18 @@ import asyncio
 import uuid
 from dotenv import load_dotenv
 from app.memory.mongodb_data_layer import MongoDBDataLayer
-from chainlit.user import User, PersistedUser
+from chainlit.user import User
 from chainlit.step import StepDict
-from chainlit.element import Element, ElementDict
 from chainlit.types import Pagination, ThreadFilter, Feedback
+
 
 # Helper for running async test methods
 def async_test(coro):
     def wrapper(*args, **kwargs):
         return asyncio.run(coro(*args, **kwargs))
+
     return wrapper
+
 
 class TestMongoDBDataLayer(unittest.TestCase):
     def setUp(self):
@@ -27,6 +29,7 @@ class TestMongoDBDataLayer(unittest.TestCase):
     def tearDown(self):
         # Reset the mongo client to avoid event loop binding issues across loops
         self.data_layer.close()
+
         # Clean up test data asynchronously
         async def cleanup():
             db = self.data_layer._get_db()
@@ -35,6 +38,7 @@ class TestMongoDBDataLayer(unittest.TestCase):
             await db["cl_steps"].delete_many({"threadId": self.test_thread_id})
             await db["cl_elements"].delete_many({"threadId": self.test_thread_id})
             await db["cl_feedbacks"].delete_many({"threadId": self.test_thread_id})
+
         asyncio.run(cleanup())
         self.data_layer.close()
 
@@ -70,7 +74,7 @@ class TestMongoDBDataLayer(unittest.TestCase):
             name="Test Thread",
             user_id=persisted_user.id,
             metadata={"source": "test"},
-            tags=["unit-test"]
+            tags=["unit-test"],
         )
 
         # Verify thread metadata
@@ -90,7 +94,7 @@ class TestMongoDBDataLayer(unittest.TestCase):
             type="user_message",
             input="Hello",
             output="Hello Output",
-            createdAt="2026-06-12T12:00:00Z"
+            createdAt="2026-06-12T12:00:00Z",
         )
         await self.data_layer.create_step(step1)
 
@@ -102,7 +106,7 @@ class TestMongoDBDataLayer(unittest.TestCase):
             type="assistant_message",
             input="Hello Output",
             output="Response!",
-            createdAt="2026-06-12T12:01:00Z"
+            createdAt="2026-06-12T12:01:00Z",
         )
         await self.data_layer.create_step(step2)
 
@@ -126,7 +130,9 @@ class TestMongoDBDataLayer(unittest.TestCase):
 
         # Verify steps were also deleted
         db = self.data_layer._get_db()
-        remaining_steps = await db["cl_steps"].count_documents({"threadId": self.test_thread_id})
+        remaining_steps = await db["cl_steps"].count_documents(
+            {"threadId": self.test_thread_id}
+        )
         self.assertEqual(remaining_steps, 0)
 
     @async_test
@@ -136,7 +142,7 @@ class TestMongoDBDataLayer(unittest.TestCase):
             forId="some-step-id",
             value=1,
             threadId=self.test_thread_id,
-            comment="Excellent response"
+            comment="Excellent response",
         )
         fb_id = await self.data_layer.upsert_feedback(fb)
         self.assertTrue(len(fb_id) > 0)
@@ -154,5 +160,6 @@ class TestMongoDBDataLayer(unittest.TestCase):
         doc_after = await db["cl_feedbacks"].find_one({"id": fb_id})
         self.assertIsNone(doc_after)
 
-if __name__ == '__main__':
+
+if __name__ == "__main__":
     unittest.main()

@@ -4,52 +4,22 @@ import json
 import datetime
 import threading
 import uuid
-from typing import List, Dict, Any, Optional
+from typing import List, Dict
+
 from langchain_core.tools import tool
-from rank_bm25 import BM25Okapi
-from qdrant_client import QdrantClient
 
 from app.core.redis import get_redis_client
-from app.services.embedding import get_embedding_service
+from app.services.wiki_search import WikiSearchService
 from app.services.graph_store import GraphStore
+
+_wiki = WikiSearchService()
+
 
 @tool
 def get_current_time():
     """Get the current time in the system. Use this whenever you are asked about the current time."""
     return datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-def tokenize(text: str) -> List[str]:
-    """Tokenize raw text into alphanumeric word components (lowercase)."""
-    return re.findall(r'\w+', text.lower())
-
-def get_wiki_docs() -> Dict[str, str]:
-    """Retrieves wiki pages content, caching in Redis for rapid FTS querying."""
-    r = get_redis_client()
-    try:
-        cached = r.get("wiki:cache")
-        if cached:
-            return json.loads(cached)
-    except Exception as e:
-        print(f"Redis cache read error: {e}")
-
-    docs = {}
-    wiki_dir = "wiki"
-    if os.path.exists(wiki_dir):
-        for root, _, files in os.walk(wiki_dir):
-            for file in files:
-                # Exclude administrative files
-                if file.endswith(".md") and file not in ("log.md", "index.md"):
-                    file_path = os.path.join(root, file)
-                    try:
-                        with open(file_path, "r", encoding="utf-8") as f:
-                            docs[file_path] = f.read()
-                    except Exception:
-                        pass
-    try:
-        r.setex("wiki:cache", 3600, json.dumps(docs))
-    except Exception as e:
-        print(f"Redis cache write error: {e}")
-    return docs
 
 @tool
 def wiki_search(query: str) -> str:
@@ -58,97 +28,8 @@ def wiki_search(query: str) -> str:
     Use this when the user asks questions that require matching terms or reading documentation contents.
     Returns the top 5 relevant snippets with their file paths.
     """
-    docs = get_wiki_docs()
-    if not docs:
-        return "No wiki pages found."
+    return _wiki.search(query)
 
-    # 1. BM25 Search
-    doc_paths = list(docs.keys())
-    doc_contents = list(docs.values())
-    tokenized_corpus = [tokenize(doc) for doc in doc_contents]
-    
-    bm25 = BM25Okapi(tokenized_corpus)
-    tokenized_query = tokenize(query)
-    bm25_scores = bm25.get_scores(tokenized_query)
-    
-    # Sort by BM25 score
-    bm25_ranked = sorted(zip(doc_paths, bm25_scores), key=lambda x: x[1], reverse=True)
-    bm25_ranking = [path for path, score in bm25_ranked if score > 0]
-
-    # 2. Qdrant Vector Search
-    qdrant_ranking = []
-    qdrant_url = os.getenv("QDRANT_URL")
-    qdrant_key = os.getenv("QDRANT_API_KEY")
-    if qdrant_url and qdrant_key:
-        try:
-            client = QdrantClient(url=qdrant_url, api_key=qdrant_key)
-            embed_service = get_embedding_service()
-            query_vector = embed_service.embed_text(query)
-            
-            res = client.query_points(
-                collection_name="wiki_pages",
-                query=query_vector,
-                limit=10
-            )
-            qdrant_ranking = [hit.payload["path"] for hit in res.points if hit.payload and "path" in hit.payload]
-        except Exception as e:
-            print(f"Qdrant vector search error: {e}")
-
-    # 3. Reciprocal Rank Fusion (RRF)
-    # k = 60
-    rrf_scores = {}
-    
-    def add_ranking(ranking):
-        for rank, path in enumerate(ranking):
-            norm_path = os.path.normpath(path)
-            rrf_scores[norm_path] = rrf_scores.get(norm_path, 0.0) + 1.0 / (60.0 + (rank + 1))
-
-    normalized_doc_paths = {os.path.normpath(p): p for p in doc_paths}
-    
-    add_ranking(bm25_ranking)
-    add_ranking(qdrant_ranking)
-
-    # Sort candidates by RRF score
-    sorted_candidates = sorted(rrf_scores.items(), key=lambda x: x[1], reverse=True)[:5]
-
-    if not sorted_candidates:
-        sorted_candidates = [(os.path.normpath(path), 0.0) for path, _ in bm25_ranked[:5]]
-
-    results = []
-    for rank, (norm_path, score) in enumerate(sorted_candidates):
-        orig_path = normalized_doc_paths.get(norm_path)
-        if not orig_path:
-            continue
-        content = docs[orig_path]
-        
-        # Extract snippet around query matches or beginning
-        snippet = ""
-        matches = list(re.finditer(re.escape(query), content, re.IGNORECASE))
-        if matches:
-            start = max(0, matches[0].start() - 100)
-            end = min(len(content), matches[0].end() + 150)
-            snippet = content[start:end].strip()
-            if start > 0:
-                snippet = "..." + snippet
-            if end < len(content):
-                snippet = snippet + "..."
-        else:
-            clean_content = content
-            if content.startswith("---"):
-                parts = content.split("---", 2)
-                if len(parts) >= 3:
-                    clean_content = parts[2].strip()
-            snippet = clean_content[:250].strip() + ("..." if len(clean_content) > 250 else "")
-            
-        results.append(
-            f"Result {rank+1}:\n"
-            f"Path: {orig_path}\n"
-            f"Relevance Score (RRF): {score:.4f}\n"
-            f"Snippet:\n{snippet}\n"
-            f"---"
-        )
-        
-    return "\n\n".join(results) if results else "No matches found."
 
 @tool
 def graph_traverse(entity_name: str) -> str:
@@ -158,68 +39,88 @@ def graph_traverse(entity_name: str) -> str:
     Returns entity details and serialized triples in the format (A) --[predicate]--> (B).
     """
     store = GraphStore()
-    
-    # 2-hop neighborhood using the store's built-in get_subgraph
     subg = store.get_subgraph(entity_name, hops=2)
     if not subg or not subg["nodes"]:
-        # Try a case-insensitive search in nodes
         all_nodes = list(store.graph.nodes)
-        matches = [n for n in all_nodes if n.lower().strip() == entity_name.lower().strip()]
+        matches = [
+            n for n in all_nodes if n.lower().strip() == entity_name.lower().strip()
+        ]
         if matches:
             subg = store.get_subgraph(matches[0], hops=2)
         else:
             return f"Entity '{entity_name}' not found in the knowledge graph."
 
-    # Format nodes with descriptions
-    node_descriptions = []
-    for node in subg["nodes"]:
-        desc = node.get("description", "")
-        desc_str = f" ({desc})" if desc else ""
-        node_descriptions.append(f"- {node['id']} [{node['type']}]{desc_str}")
-
-    # Format edges as triples
-    triples = []
-    for edge in subg["edges"]:
-        triples.append(f"  ({edge['source']}) --[{edge['predicate']}]--> ({edge['target']})")
-
-    response = (
+    node_descriptions = [
+        f"- {n['id']} [{n['type']}]{' (' + n['description'] + ')' if n.get('description') else ''}"
+        for n in subg["nodes"]
+    ]
+    triples = [
+        f"  ({e['source']}) --[{e['predicate']}]--> ({e['target']})"
+        for e in subg["edges"]
+    ]
+    return (
         f"Subgraph for '{entity_name}' (up to 2 hops):\n\n"
-        f"Entities involved:\n" + "\n".join(node_descriptions) + "\n\n"
-        f"Relationships:\n" + ("\n".join(triples) if triples else "  No relations found.")
+        "Entities involved:\n" + "\n".join(node_descriptions) + "\n\n"
+        "Relationships:\n"
+        + ("\n".join(triples) if triples else "  No relations found.")
     )
-    return response
 
-def _run_ingest_async(task_id: str, source: str, path_or_repo: str):
+
+# ── Ingestion helpers ─────────────────────────────────────────────────────────
+
+
+def _run_ingest_async(task_id: str, source: str, path_or_repo: str) -> None:
     r = get_redis_client()
     task_key = f"ingest:task:{task_id}"
+    now = datetime.datetime.now(datetime.timezone.utc).isoformat()
     try:
         from ingest import run_ingest_pipeline
-        
-        # Call the refactored ingestion pipeline function
+
         if source == "local":
             result = run_ingest_pipeline(source=source, dir_path=path_or_repo)
         elif source == "github":
             result = run_ingest_pipeline(source=source, repo_name=path_or_repo)
         else:
             raise ValueError(f"Unsupported source: {source}")
-            
         task_data = {
             "status": "SUCCESS",
-            "started_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+            "started_at": now,
             "finished_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
             "error": None,
-            "summary": result.get("summary", "Ingestion run finished.")
+            "summary": result.get("summary", "Ingestion run finished."),
         }
-        r.set(task_key, json.dumps(task_data))
     except Exception as e:
         task_data = {
             "status": "FAILED",
-            "started_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+            "started_at": now,
             "finished_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
             "error": str(e),
-            "summary": "Ingestion failed with error."
+            "summary": "Ingestion failed with error.",
         }
-        r.set(task_key, json.dumps(task_data))
+    r.set(task_key, json.dumps(task_data))
+
+
+def _schedule_ingest(source: str, path_or_repo: str, summary: str) -> str:
+    """Creates a PENDING task in Redis and starts a daemon background thread. Returns task_id."""
+    task_id = str(uuid.uuid4())
+    r = get_redis_client()
+    r.set(
+        f"ingest:task:{task_id}",
+        json.dumps(
+            {
+                "status": "PENDING",
+                "started_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+                "finished_at": None,
+                "error": None,
+                "summary": summary,
+            }
+        ),
+    )
+    threading.Thread(
+        target=_run_ingest_async, args=(task_id, source, path_or_repo), daemon=True
+    ).start()
+    return task_id
+
 
 @tool
 def ingest_source(source: str, path_or_repo: str) -> str:
@@ -229,28 +130,29 @@ def ingest_source(source: str, path_or_repo: str) -> str:
     path_or_repo: The directory path or github repo identifier.
     Returns a task ID that can be polled for status.
     """
-    task_id = str(uuid.uuid4())
-    task_key = f"ingest:task:{task_id}"
-    
-    r = get_redis_client()
-    task_data = {
-        "status": "PENDING",
-        "started_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
-        "finished_at": None,
-        "error": None,
-        "summary": "Task scheduled in background thread."
-    }
-    r.set(task_key, json.dumps(task_data))
-    
-    # Run the ingestion in a separate thread
-    thread = threading.Thread(
-        target=_run_ingest_async,
-        args=(task_id, source, path_or_repo),
-        daemon=True
+    task_id = _schedule_ingest(
+        source, path_or_repo, "Task scheduled in background thread."
     )
-    thread.start()
-    
-    return f"Ingestion task scheduled successfully. Task ID: {task_id}. You can check status with the `/ingest/{task_id}` endpoint or let the user know."
+    return (
+        f"Ingestion task scheduled successfully. Task ID: {task_id}. "
+        "You can check status with the `/ingest/{task_id}` endpoint or let the user know."
+    )
+
+
+@tool
+def sync_knowledge_base() -> str:
+    """
+    Manually triggers a full synchronization of the local knowledge base (raw/local directory).
+    Use this when the user asks to sync, update, or refresh the knowledge base manually.
+    Returns a task ID that can be polled for status.
+    """
+    task_id = _schedule_ingest(
+        "local",
+        "raw/local",
+        "Manual knowledge base sync scheduled in background thread.",
+    )
+    return f"Manual knowledge base synchronization started. Task ID: {task_id}. You can track status with this ID."
+
 
 @tool
 def lint_wiki() -> str:
@@ -262,122 +164,79 @@ def lint_wiki() -> str:
     if not os.path.exists(wiki_dir):
         return "Wiki directory does not exist. No files to audit."
 
-    pages = []
-    for root, _, files in os.walk(wiki_dir):
-        for file in files:
-            if file.endswith(".md"):
-                pages.append(os.path.join(root, file))
+    pages = [
+        os.path.join(root, fname)
+        for root, _, files in os.walk(wiki_dir)
+        for fname in files
+        if fname.endswith(".md")
+    ]
 
-    conflict_pages = []
-    incoming_links = {}
-    outgoing_links = {}
+    conflict_pages: List[str] = []
+    incoming: Dict[str, List[str]] = {os.path.normpath(p): [] for p in pages}
+    outgoing: Dict[str, List[str]] = {os.path.normpath(p): [] for p in pages}
 
     for page in pages:
-        normalized_p = os.path.normpath(page)
-        incoming_links[normalized_p] = []
-        outgoing_links[normalized_p] = []
-
-    # Read files to scan for references and conflicts
-    for page in pages:
-        normalized_page = os.path.normpath(page)
+        norm_page = os.path.normpath(page)
         try:
             with open(page, "r", encoding="utf-8") as f:
                 content = f.read()
-                
-            # Scan for conflicts
             if "[CONFLICT]" in content:
                 conflict_pages.append(page)
-                
-            # Scan for links [[page-slug]]
-            links = re.findall(r'\[\[([^\]]+)\]\]', content)
-            for link in links:
-                # Link is usually title or slug (e.g. `auth-service` -> `wiki/services/auth-service.md`)
+            for link in re.findall(r"\[\[([^\]]+)\]\]", content):
                 slug = link.lower().strip().replace(" ", "-")
-                # Look for matching target file
-                found = False
                 for p in pages:
-                    p_name = os.path.splitext(os.path.basename(p))[0]
-                    if p_name == slug:
+                    if os.path.splitext(os.path.basename(p))[0] == slug:
                         target = os.path.normpath(p)
-                        outgoing_links[normalized_page].append(target)
-                        if target in incoming_links:
-                            incoming_links[target].append(normalized_page)
-                        found = True
+                        outgoing[norm_page].append(target)
+                        if target in incoming:
+                            incoming[target].append(norm_page)
                         break
         except Exception:
             pass
 
-    # Find orphan pages (pages with 0 incoming links, excluding index.md and log.md)
-    orphan_pages = []
-    for page in pages:
-        norm_p = os.path.normpath(page)
-        base = os.path.basename(page)
-        if base in ("index.md", "log.md"):
-            continue
-        if len(incoming_links[norm_p]) == 0:
-            orphan_pages.append(page)
+    orphan_pages = [
+        p
+        for p in pages
+        if os.path.basename(p) not in ("index.md", "log.md")
+        and not incoming.get(os.path.normpath(p))
+    ]
 
-    # Compile report
     report = [
         "# Wiki Health Audit Report",
         f"Date: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
         f"Total Wiki Pages Audited: {len(pages)}",
-        ""
+        "",
+        "## Conflict Tags",
     ]
-
-    report.append("## Conflict Tags")
     if conflict_pages:
-        report.append("The following pages contain active `[CONFLICT]` tags that require manual resolution:")
-        for cp in conflict_pages:
-            report.append(f"- [{os.path.basename(cp)}](file://{os.path.abspath(cp)})")
+        report.append(
+            "The following pages contain active `[CONFLICT]` tags that require manual resolution:"
+        )
+        report.extend(
+            f"- [{os.path.basename(cp)}](file://{os.path.abspath(cp)})"
+            for cp in conflict_pages
+        )
     else:
         report.append("✅ No pages with active `[CONFLICT]` tags found.")
-    report.append("")
-
-    report.append("## Orphan Pages")
+    report += ["", "## Orphan Pages"]
     if orphan_pages:
-        report.append("The following pages are not linked from any other page in the wiki:")
-        for op in orphan_pages:
-            report.append(f"- [{os.path.basename(op)}](file://{os.path.abspath(op)})")
+        report.append(
+            "The following pages are not linked from any other page in the wiki:"
+        )
+        report.extend(
+            f"- [{os.path.basename(op)}](file://{os.path.abspath(op)})"
+            for op in orphan_pages
+        )
     else:
         report.append("✅ No orphan pages found.")
     report.append("")
-
     return "\n".join(report)
 
-@tool
-def sync_knowledge_base() -> str:
-    """
-    Manually triggers a full synchronization of the local knowledge base (raw/local directory).
-    Use this when the user asks to sync, update, or refresh the knowledge base manually.
-    Returns a task ID that can be polled for status.
-    """
-    task_id = str(uuid.uuid4())
-    task_key = f"ingest:task:{task_id}"
-    
-    r = get_redis_client()
-    task_data = {
-        "status": "PENDING",
-        "started_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
-        "finished_at": None,
-        "error": None,
-        "summary": "Manual knowledge base sync scheduled in background thread."
-    }
-    r.set(task_key, json.dumps(task_data))
-    
-    # Run the ingestion in a separate thread
-    thread = threading.Thread(
-        target=_run_ingest_async,
-        args=(task_id, "local", "raw/local"),
-        daemon=True
-    )
-    thread.start()
-    
-    return f"Manual knowledge base synchronization started. Task ID: {task_id}. You can track status with this ID."
-
 
 @tool
-def mongodb_query(collection: str, filter_json: str, projection_json: str = None, limit: int = 100) -> str:
+def mongodb_query(
+    collection: str, filter_json: str, projection_json: str = None, limit: int = 100
+) -> str:
     """
     Query structured company data from MongoDB. Use this when you need exact facts about employees,
     projects, bug tracking, KPIs, organizational charts, payroll, attendance, CRM customers,
@@ -410,8 +269,8 @@ def mongodb_query(collection: str, filter_json: str, projection_json: str = None
        - status ENUM: "Dung gio" = "Duc giờ", late = "Muon 20 phut" or "Muon 35 phut",
          annual leave = "Nghi phep", sick leave = "Nghi om", WFH = "Remote"
        - status exact values: "Đúng giờ", "Muộn 20 phút", "Muộn 35 phút", "Nghỉ phép", "Nghỉ ốm", "Remote"
-       - To find late employees: use filter {"status": {"$regex": "Mu\u1ed9n"}}
-       - To find employees on leave: use filter {"status": {"$in": ["Ngh\u1ec9 ph\u00e9p", "Ngh\u1ec9 \u1ed1m"]}}
+       - To find late employees: use filter {"status": {"$regex": "Muộn"}}
+       - To find employees on leave: use filter {"status": {"$in": ["Nghỉ phép", "Nghỉ ốm"]}}
 
     7. 'payroll_september_2024': Payroll data for September 2024.
        - Fields: employee_id, full_name, department, position, level, base_salary_gross,
@@ -475,44 +334,29 @@ def mongodb_query(collection: str, filter_json: str, projection_json: str = None
         projection_json (str, optional): JSON string for field projection. Use {"_id": 0} to hide IDs.
         limit (int, optional): Max documents to return. Defaults to 100. Max is 1000.
     """
-    import json
-    # Restrict limit to avoid token blow-up, but allow up to 1000 for full-collection queries
     limit = min(max(1, limit), 1000)
-    
     try:
-        mongo_uri = os.getenv("MONGO_URI", "mongodb://localhost:27017/")
         from pymongo import MongoClient
-        client = MongoClient(mongo_uri)
+
+        client = MongoClient(os.getenv("MONGO_URI", "mongodb://localhost:27017/"))
         db = client["personal_knowledge_ai"]
-        
-        ALLOWED_COLLECTIONS = db.list_collection_names()
-        
-        # ALLOWED_COLLECTIONS = [
-        #     'employees', 'projects', 'bug_tracker', 'kpi_okr', 'org_chart',
-        #     'attendance_october_2024', 'payroll_september_2024', 'revenue_2024', 
-        #     'infrastructure_costs_sep2024'
-        # ]
-        if collection not in ALLOWED_COLLECTIONS:
-            return f"Error: Collection '{collection}' is invalid. Allowed collections: {', '.join(ALLOWED_COLLECTIONS)}."
-            
-        col = db[collection]
-        
-        # Parse query parameters
+
+        allowed = db.list_collection_names()
+        if collection not in allowed:
+            return f"Error: Collection '{collection}' is invalid. Allowed collections: {', '.join(allowed)}."
+
         query_dict = json.loads(filter_json) if filter_json else {}
         proj_dict = json.loads(projection_json) if projection_json else None
-        
-        results = list(col.find(query_dict, proj_dict).limit(limit))
-        
-        # Serialize ObjectIds/dates for JSON output
+        results = list(db[collection].find(query_dict, proj_dict).limit(limit))
+
         for r in results:
             if "_id" in r:
                 r["_id"] = str(r["_id"])
-                
+
         if not results:
             return f"No records found in collection '{collection}' matching query: {filter_json}"
-            
         return json.dumps(results, ensure_ascii=False, indent=2)
-        
+
     except json.JSONDecodeError as je:
         return f"JSON Syntax Error: Ensure filter_json and projection_json are valid JSON strings. Details: {je}"
     except Exception as e:
@@ -548,28 +392,40 @@ def generate_chart(
 
         chart_type = chart_type.lower().strip()
         if chart_type == "pie":
-            fig = go.Figure(data=[go.Pie(
-                labels=labels,
-                values=values,
-                hole=0.3,
-                textinfo="label+percent",
-            )])
+            fig = go.Figure(
+                data=[
+                    go.Pie(
+                        labels=labels,
+                        values=values,
+                        hole=0.3,
+                        textinfo="label+percent",
+                    )
+                ]
+            )
         elif chart_type == "bar":
-            fig = go.Figure(data=[go.Bar(
-                x=labels,
-                y=values,
-                text=[f"{v:,.2f}" for v in values],
-                textposition="auto",
-            )])
-            fig.update_layout(xaxis_title=x_label or "", yaxis_title=y_label or "")
+            fig = go.Figure(
+                data=[
+                    go.Bar(
+                        x=labels,
+                        y=values,
+                        text=[f"{v:,.2f}" for v in values],
+                        textposition="auto",
+                    )
+                ]
+            )
+            fig.update_layout(xaxis_title=x_label, yaxis_title=y_label)
         elif chart_type == "line":
-            fig = go.Figure(data=[go.Scatter(
-                x=labels,
-                y=values,
-                mode="lines+markers",
-                text=[f"{v:,.2f}" for v in values],
-            )])
-            fig.update_layout(xaxis_title=x_label or "", yaxis_title=y_label or "")
+            fig = go.Figure(
+                data=[
+                    go.Scatter(
+                        x=labels,
+                        y=values,
+                        mode="lines+markers",
+                        text=[f"{v:,.2f}" for v in values],
+                    )
+                ]
+            )
+            fig.update_layout(xaxis_title=x_label, yaxis_title=y_label)
         else:
             return f"Error: Unsupported chart_type '{chart_type}'. Use 'pie', 'bar', or 'line'."
 

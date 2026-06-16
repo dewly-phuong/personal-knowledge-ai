@@ -1,7 +1,7 @@
 import unittest
 import os
 from dotenv import load_dotenv
-from app.agent import get_llm
+
 
 class TestGeminiIntegration(unittest.TestCase):
     def setUp(self):
@@ -12,10 +12,11 @@ class TestGeminiIntegration(unittest.TestCase):
         """Test if the agent can correctly call a tool."""
         if not self.api_key:
             self.skipTest("GOOGLE_API_KEY not found in .env")
-        
+
         from app.agent import create_conversational_agent
+
         agent = create_conversational_agent()
-        
+
         try:
             # Ask a question that requires the get_current_time tool
             response = agent.invoke({"input": "What time is it?", "chat_history": []})
@@ -25,5 +26,6 @@ class TestGeminiIntegration(unittest.TestCase):
         except Exception as e:
             self.fail(f"Agent failed to call tool. Error: {e}")
 
-if __name__ == '__main__':
+
+if __name__ == "__main__":
     unittest.main()

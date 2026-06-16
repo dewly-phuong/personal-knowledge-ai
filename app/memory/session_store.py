@@ -15,10 +15,13 @@ REDIS_KEY_PREFIX = "session:"
 DB_NAME = "personal_knowledge_ai"
 COLLECTION_NAME = "chat_history"
 
+
 class SessionStore:
     def __init__(self, redis_client=None, mongo_uri: str = None):
         self._redis = redis_client or get_redis_client()
-        self._mongo_uri = mongo_uri or os.getenv("MONGO_URI", "mongodb://localhost:27017/")
+        self._mongo_uri = mongo_uri or os.getenv(
+            "MONGO_URI", "mongodb://localhost:27017/"
+        )
         self._mongo_client = None
         self._db = None
         self._collection = None
@@ -27,7 +30,9 @@ class SessionStore:
     def _get_collection(self):
         if self._mongo_client is None:
             try:
-                self._mongo_client = AsyncIOMotorClient(self._mongo_uri, serverSelectionTimeoutMS=2000)
+                self._mongo_client = AsyncIOMotorClient(
+                    self._mongo_uri, serverSelectionTimeoutMS=2000
+                )
                 self._db = self._mongo_client[DB_NAME]
                 self._collection = self._db[COLLECTION_NAME]
             except Exception as e:
@@ -37,7 +42,7 @@ class SessionStore:
 
     async def load(self, session_id: str) -> List[BaseMessage]:
         key = f"{REDIS_KEY_PREFIX}{session_id}"
-        
+
         # 1. Try Redis cache
         try:
             loop = asyncio.get_running_loop()
@@ -46,7 +51,9 @@ class SessionStore:
                 try:
                     return messages_from_dict(json.loads(raw))
                 except Exception as e:
-                    logger.warning(f"Failed to parse cached history for session {session_id}: {e}")
+                    logger.warning(
+                        f"Failed to parse cached history for session {session_id}: {e}"
+                    )
         except Exception as e:
             logger.warning(f"Redis error during load for session {session_id}: {e}")
 
@@ -70,7 +77,9 @@ class SessionStore:
         try:
             loop = asyncio.get_running_loop()
             val = json.dumps(serialized_messages)
-            await loop.run_in_executor(None, lambda: self._redis.set(key, val, ex=REDIS_TTL))
+            await loop.run_in_executor(
+                None, lambda: self._redis.set(key, val, ex=REDIS_TTL)
+            )
         except Exception as e:
             logger.warning(f"Failed to seed Redis cache: {e}")
 
@@ -82,7 +91,9 @@ class SessionStore:
         # 1. Write to Redis (awaited)
         try:
             loop = asyncio.get_running_loop()
-            await loop.run_in_executor(None, lambda: self._redis.set(key, val, ex=REDIS_TTL))
+            await loop.run_in_executor(
+                None, lambda: self._redis.set(key, val, ex=REDIS_TTL)
+            )
         except Exception as e:
             logger.warning(f"Redis error during save for session {session_id}: {e}")
 
@@ -99,10 +110,10 @@ class SessionStore:
                 {
                     "$set": {
                         "messages": serialized_messages,
-                        "updated_at": datetime.now(timezone.utc)
+                        "updated_at": datetime.now(timezone.utc),
                     }
                 },
-                upsert=True
+                upsert=True,
             )
         except Exception as e:
             logger.error(f"MongoDB error during save for session {session_id}: {e}")
@@ -143,7 +154,7 @@ class SessionStore:
         """Ping MongoDB and return True if healthy, False otherwise."""
         try:
             col = self._get_collection()
-            await col.database.client.admin.command('ping')
+            await col.database.client.admin.command("ping")
             return True
         except Exception as e:
             logger.warning(f"MongoDB health check failed: {e}")
@@ -157,4 +168,3 @@ class SessionStore:
         except Exception as e:
             logger.warning(f"Redis health check failed: {e}")
             return False
-

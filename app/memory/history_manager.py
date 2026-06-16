@@ -4,9 +4,8 @@ from app.memory.session_store import SessionStore
 
 
 class HistoryManager:
-    def __init__(self, store: SessionStore, llm=None):
+    def __init__(self, store: SessionStore):
         self.store = store
-        self.llm = llm
 
     async def get_context(self, session_id: str) -> List[BaseMessage]:
         """

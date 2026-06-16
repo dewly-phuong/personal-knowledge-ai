@@ -3,6 +3,7 @@ import datetime
 from pathlib import Path
 from app.services.connectors.base import BaseConnector, Document
 
+
 class LocalFilesConnector(BaseConnector):
     def __init__(self, directory_path: str):
         self.directory_path = Path(directory_path).resolve()
@@ -19,13 +20,15 @@ class LocalFilesConnector(BaseConnector):
                     try:
                         with open(file_path, "r", encoding="utf-8") as f:
                             content = f.read()
-                        
+
                         stat = file_path.stat()
-                        mtime = datetime.datetime.fromtimestamp(stat.st_mtime, datetime.timezone.utc)
+                        mtime = datetime.datetime.fromtimestamp(
+                            stat.st_mtime, datetime.timezone.utc
+                        )
                         last_modified = mtime.isoformat()
-                        
+
                         relative_path = file_path.relative_to(self.directory_path)
-                        
+
                         documents.append(
                             Document(
                                 content=content,
@@ -38,5 +41,5 @@ class LocalFilesConnector(BaseConnector):
                     except Exception as e:
                         # Log error and skip file
                         print(f"Error reading file {file_path}: {e}")
-                        
+
         return documents

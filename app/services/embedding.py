@@ -4,6 +4,7 @@ from typing import List, Protocol
 
 try:
     from dotenv import load_dotenv
+
     load_dotenv()
 except ImportError:
     pass
@@ -40,17 +41,19 @@ class ModernBERTEmbeddingService:
             raise ImportError(
                 "sentence-transformers is not installed. Please run 'uv add sentence-transformers torch'"
             )
-        
+
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
         print(f"Loading embedding model '{model_name}' on device '{self.device}'...")
-        self.model = SentenceTransformer(model_name, trust_remote_code=True, device=self.device)
+        self.model = SentenceTransformer(
+            model_name, trust_remote_code=True, device=self.device
+        )
         print("Embedding model loaded successfully.")
 
     def embed_text(self, text: str) -> List[float]:
         """Embeds a single text string into a 768-dimensional float list."""
         if not text.strip():
             return [0.0] * 768
-        
+
         # sentence-transformers returns a numpy array which we convert to list
         embedding = self.model.encode(text, convert_to_numpy=True)
         return embedding.tolist()
@@ -59,7 +62,7 @@ class ModernBERTEmbeddingService:
         """Embeds a batch of texts."""
         if not texts:
             return []
-        
+
         embeddings = self.model.encode(texts, convert_to_numpy=True)
         return embeddings.tolist()
 
@@ -95,7 +98,7 @@ class GeminiEmbeddingService:
             response = self.client.models.embed_content(
                 model=self.model_name,
                 contents=text,
-                config=types.EmbedContentConfig(output_dimensionality=768)
+                config=types.EmbedContentConfig(output_dimensionality=768),
             )
             return response.embeddings[0].values
         except Exception as e:
@@ -113,20 +116,24 @@ class GeminiEmbeddingService:
         for idx, text in enumerate(texts):
             if text.strip():
                 non_empty_indices.append(idx)
-                non_empty_contents.append(types.Content(parts=[types.Part.from_text(text=text)]))
+                non_empty_contents.append(
+                    types.Content(parts=[types.Part.from_text(text=text)])
+                )
 
         if non_empty_contents:
             try:
                 response = self.client.models.embed_content(
                     model=self.model_name,
                     contents=non_empty_contents,
-                    config=types.EmbedContentConfig(output_dimensionality=768)
+                    config=types.EmbedContentConfig(output_dimensionality=768),
                 )
                 for i, emb in enumerate(response.embeddings):
                     original_idx = non_empty_indices[i]
                     results[original_idx] = emb.values
             except Exception as e:
-                raise RuntimeError(f"Gemini batch embedding generation failed: {e}") from e
+                raise RuntimeError(
+                    f"Gemini batch embedding generation failed: {e}"
+                ) from e
 
         return results
 
@@ -148,9 +155,13 @@ def get_embedding_service(api_key: str = None) -> EmbeddingService:
             print("Gemini Embedding service initialized successfully.")
             return service
         except Exception as e:
-            print(f"Failed to initialize Gemini Embedding service: {e}. Falling back to local model.")
+            print(
+                f"Failed to initialize Gemini Embedding service: {e}. Falling back to local model."
+            )
     else:
-        print("GOOGLE_API_KEY/GEMINI_API_KEY not found in environment. Falling back to local model.")
+        print(
+            "GOOGLE_API_KEY/GEMINI_API_KEY not found in environment. Falling back to local model."
+        )
 
     # 2. Fall back to local ModernBERT
     try:

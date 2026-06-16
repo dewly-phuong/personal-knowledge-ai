@@ -2,6 +2,7 @@ import datetime
 from github import Github
 from app.services.connectors.base import BaseConnector, Document
 
+
 class GitHubConnector(BaseConnector):
     def __init__(self, token: str, repo_name: str):
         """
@@ -20,7 +21,7 @@ class GitHubConnector(BaseConnector):
             g = Github(self.token)
             repo = g.get_repo(self.repo_name)
             contents = repo.get_contents("")
-            
+
             while contents:
                 file_content = contents.pop(0)
                 if file_content.type == "dir":
@@ -28,15 +29,17 @@ class GitHubConnector(BaseConnector):
                 else:
                     path = file_content.path
                     path_lower = path.lower()
-                    
+
                     # Target README.md and all files in docs/ folder ending with .md or .txt
                     is_readme = path_lower.endswith("readme.md")
-                    is_in_docs = "docs/" in path_lower and path_lower.endswith((".md", ".txt"))
-                    
+                    is_in_docs = "docs/" in path_lower and path_lower.endswith(
+                        (".md", ".txt")
+                    )
+
                     if is_readme or is_in_docs:
                         try:
                             decoded = file_content.decoded_content.decode("utf-8")
-                            
+
                             # Fetch last commit date for this specific file
                             commits = repo.get_commits(path=path)
                             if commits.totalCount > 0:
@@ -45,8 +48,10 @@ class GitHubConnector(BaseConnector):
                                     tzinfo=datetime.timezone.utc
                                 ).isoformat()
                             else:
-                                last_modified = datetime.datetime.now(datetime.timezone.utc).isoformat()
-                            
+                                last_modified = datetime.datetime.now(
+                                    datetime.timezone.utc
+                                ).isoformat()
+
                             documents.append(
                                 Document(
                                     content=decoded,
@@ -60,5 +65,5 @@ class GitHubConnector(BaseConnector):
                             print(f"Error downloading content for {path}: {e}")
         except Exception as e:
             print(f"Error connecting to GitHub repository {self.repo_name}: {e}")
-            
+
         return documents

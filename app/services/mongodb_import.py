@@ -6,87 +6,123 @@ import hashlib
 import datetime
 from pymongo import MongoClient, ReplaceOne
 
+
+# ── Shared helpers ────────────────────────────────────────────────────────────
+
+
+def _open_db(mongo_uri: str = None):
+    """Opens a MongoDB connection and returns (db, metadata_collection)."""
+    uri = mongo_uri or os.getenv("MONGO_URI", "mongodb://localhost:27017/")
+    client = MongoClient(uri)
+    db = client["personal_knowledge_ai"]
+    return db, db["_ingest_metadata"]
+
+
+def _get_mtime(file_path: str) -> str:
+    """Returns file modification time as an ISO-8601 UTC string."""
+    mtime = os.path.getmtime(file_path)
+    return datetime.datetime.fromtimestamp(mtime, datetime.timezone.utc).isoformat()
+
+
+def _is_unchanged(meta_col, meta_key: str, last_modified: str) -> bool:
+    """Returns True when the file hasn't changed since the last import."""
+    meta = meta_col.find_one({"filepath": meta_key})
+    return bool(meta and meta.get("last_modified") == last_modified)
+
+
+def _update_meta(meta_col, meta_key: str, last_modified: str, **extra) -> None:
+    """Upserts the _ingest_metadata document for meta_key."""
+    meta_col.update_one(
+        {"filepath": meta_key},
+        {
+            "$set": {
+                "last_modified": last_modified,
+                "updated_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+                **extra,
+            }
+        },
+        upsert=True,
+    )
+
+
+def _row_hash(row: dict) -> str:
+    return hashlib.sha256(
+        json.dumps(row, sort_keys=True, ensure_ascii=False, default=str).encode("utf-8")
+    ).hexdigest()
+
+
+# ── JSON importer ─────────────────────────────────────────────────────────────
+
+
 def import_json_files_to_mongodb(dir_path: str = "raw/local"):
     """
     Scans dir_path for JSON files and imports/upserts them into MongoDB
     under the 'personal_knowledge_ai' database.
     Checks file modification dates to prevent duplicate imports.
     """
-    mongo_uri = os.getenv("MONGO_URI", "mongodb://localhost:27017/")
-    client = MongoClient(mongo_uri)
-    db = client["personal_knowledge_ai"]
-    metadata_col = db["_ingest_metadata"]
-
     if not os.path.exists(dir_path):
         print(f"Directory {dir_path} not found. Skipping JSON import.")
         return {"status": "skipped", "message": "Directory not found."}
 
+    db, meta_col = _open_db()
     imported_count = 0
     skipped_count = 0
 
-    for filename in os.listdir(dir_path):
-        if not filename.endswith(".json"):
-            continue
+    # Walk the entire dir_path tree so JSON files nested in subdirectories are found.
+    # Prune csv/ and converted/ — those are managed by separate importers.
+    _SKIP_DIRS = {"csv", "converted"}
+    for root, dirs, files in os.walk(dir_path):
+        dirs[:] = [d for d in dirs if d not in _SKIP_DIRS]
+        for filename in files:
+            if not filename.endswith(".json"):
+                continue
 
-        file_path = os.path.join(dir_path, filename)
-        collection_name = os.path.splitext(filename)[0]
-
-        # Get last modified time
-        try:
-            mtime = os.path.getmtime(file_path)
-            last_modified = datetime.datetime.fromtimestamp(mtime, datetime.timezone.utc).isoformat()
-        except Exception as e:
-            print(f"Failed to read file status for {filename}: {e}")
-            continue
-
-        # Check against metadata collection
-        meta = metadata_col.find_one({"filepath": filename})
-        if meta and meta.get("last_modified") == last_modified:
-            skipped_count += 1
-            continue
-
-        # Load file content
-        print(f"Importing JSON file to MongoDB: {filename} -> collection: {collection_name}")
-        with open(file_path, "r", encoding="utf-8") as f:
+            file_path = os.path.join(root, filename)
             try:
-                data = json.load(f)
+                last_modified = _get_mtime(file_path)
+            except Exception as e:
+                print(f"Failed to read file status for {filename}: {e}")
+                continue
+
+            if _is_unchanged(meta_col, filename, last_modified):
+                skipped_count += 1
+                continue
+
+            print(
+                f"Importing JSON file to MongoDB: {filename} -> collection: {filename[:-5]}"
+            )
+            try:
+                with open(file_path, "r", encoding="utf-8") as f:
+                    data = json.load(f)
             except Exception as e:
                 print(f"Failed to parse JSON file {filename}: {e}")
                 continue
 
-        if not isinstance(data, list):
-            data = [data]
+            collection_name = os.path.splitext(filename)[0]
+            if not isinstance(data, list):
+                data = [data]
 
-        # Upsert elements using 'id' field
-        operations = []
-        for item in data:
-            if isinstance(item, dict) and "id" in item:
-                operations.append(
-                    ReplaceOne({"id": item["id"]}, item, upsert=True)
-                )
-            else:
-                # If no id, fallback to replacing the document if it matches completely, or insert
-                # Using item as the filter
-                operations.append(
-                    ReplaceOne(item, item, upsert=True)
-                )
+            operations = [
+                ReplaceOne({"id": item["id"]}, item, upsert=True)
+                if isinstance(item, dict) and "id" in item
+                else ReplaceOne(item, item, upsert=True)
+                for item in data
+            ]
 
-        if operations:
-            try:
-                db[collection_name].bulk_write(operations)
-            except Exception as e:
-                print(f"Failed to bulk write documents for {filename}: {e}")
-                continue
+            if operations:
+                try:
+                    db[collection_name].bulk_write(operations)
+                except Exception as e:
+                    print(f"Failed to bulk write documents for {filename}: {e}")
+                    continue
 
-        # Update metadata
-        metadata_col.update_one(
-            {"filepath": filename},
-            {"$set": {"last_modified": last_modified, "updated_at": datetime.datetime.now(datetime.timezone.utc).isoformat()}},
-            upsert=True
-        )
-        imported_count += 1
+            _update_meta(meta_col, filename, last_modified)
+            imported_count += 1
 
     return {"status": "success", "imported": imported_count, "skipped": skipped_count}
+
+
+# ── CSV importer ──────────────────────────────────────────────────────────────
 
 
 def import_csv_files_to_mongodb(dir_path: str = "raw/local"):
@@ -96,16 +132,12 @@ def import_csv_files_to_mongodb(dir_path: str = "raw/local"):
     Each CSV file becomes its own collection (filename without extension).
     Skips files that have not been modified since the last import.
     """
-    mongo_uri = os.getenv("MONGO_URI", "mongodb://localhost:27017/")
-    client = MongoClient(mongo_uri)
-    db = client["personal_knowledge_ai"]
-    metadata_col = db["_ingest_metadata"]
-
     csv_dir = os.path.join(dir_path, "csv")
     if not os.path.exists(csv_dir):
         print(f"CSV directory {csv_dir} not found. Skipping CSV import.")
         return {"status": "skipped", "message": "CSV directory not found."}
 
+    db, meta_col = _open_db()
     imported_count = 0
     skipped_count = 0
 
@@ -114,33 +146,31 @@ def import_csv_files_to_mongodb(dir_path: str = "raw/local"):
             continue
 
         file_path = os.path.join(csv_dir, filename)
-        collection_name = os.path.splitext(filename)[0]
+        meta_key = f"csv/{filename}"
 
-        # Get last modified time
         try:
-            mtime = os.path.getmtime(file_path)
-            last_modified = datetime.datetime.fromtimestamp(mtime, datetime.timezone.utc).isoformat()
+            last_modified = _get_mtime(file_path)
         except Exception as e:
             print(f"Failed to read file status for {filename}: {e}")
             continue
 
-        # Check against metadata collection (keyed by filepath to avoid collision with JSON entries)
-        meta_key = f"csv/{filename}"
-        meta = metadata_col.find_one({"filepath": meta_key})
-        if meta and meta.get("last_modified") == last_modified:
+        if _is_unchanged(meta_col, meta_key, last_modified):
             skipped_count += 1
             print(f"Skipping CSV file (unchanged): {filename}")
             continue
 
-        # Parse CSV
-        print(f"Importing CSV file to MongoDB: {filename} -> collection: {collection_name}")
-        rows = []
+        print(
+            f"Importing CSV file to MongoDB: {filename} -> collection: {filename[:-4]}"
+        )
         try:
             with open(file_path, "r", encoding="utf-8-sig") as f:
-                reader = csv.DictReader(f)
-                for row in reader:
-                    # Strip whitespace from keys and values
-                    rows.append({k.strip(): (v.strip() if isinstance(v, str) else v) for k, v in row.items()})
+                rows = [
+                    {
+                        k.strip(): (v.strip() if isinstance(v, str) else v)
+                        for k, v in row.items()
+                    }
+                    for row in csv.DictReader(f)
+                ]
         except Exception as e:
             print(f"Failed to parse CSV file {filename}: {e}")
             continue
@@ -149,37 +179,27 @@ def import_csv_files_to_mongodb(dir_path: str = "raw/local"):
             print(f"  No rows found in {filename}. Skipping.")
             continue
 
-        # Build a stable, unique key per row by hashing all field values.
-        # This is correct for ANY CSV layout, including time-series data where
-        # a column like 'employee_id' is repeated across multiple rows.
+        collection_name = os.path.splitext(filename)[0]
         operations = []
         for row in rows:
-            row_hash = hashlib.sha256(
-                json.dumps(row, sort_keys=True, ensure_ascii=False).encode("utf-8")
-            ).hexdigest()
-            row["_row_key"] = row_hash
-            operations.append(ReplaceOne({"_row_key": row_hash}, row, upsert=True))
+            row["_row_key"] = _row_hash(row)
+            operations.append(
+                ReplaceOne({"_row_key": row["_row_key"]}, row, upsert=True)
+            )
 
-        if operations:
-            try:
-                db[collection_name].bulk_write(operations)
-            except Exception as e:
-                print(f"Failed to bulk write documents for {filename}: {e}")
-                continue
+        try:
+            db[collection_name].bulk_write(operations)
+        except Exception as e:
+            print(f"Failed to bulk write documents for {filename}: {e}")
+            continue
 
-        # Update metadata
-        metadata_col.update_one(
-            {"filepath": meta_key},
-            {"$set": {
-                "last_modified": last_modified,
-                "updated_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
-                "row_count": len(rows),
-            }},
-            upsert=True
-        )
+        _update_meta(meta_col, meta_key, last_modified, row_count=len(rows))
         imported_count += 1
 
     return {"status": "success", "imported": imported_count, "skipped": skipped_count}
+
+
+# ── XLSX importer ─────────────────────────────────────────────────────────────
 
 
 def _to_snake_case(text: str) -> str:
@@ -189,7 +209,6 @@ def _to_snake_case(text: str) -> str:
 
 
 def _xlsx_sheet_to_collection_name(sheet_name: str) -> str:
-    """Converts an Excel sheet name to a valid MongoDB collection name (snake_case, ASCII-only)."""
     return _to_snake_case(sheet_name)
 
 
@@ -197,7 +216,7 @@ def import_xlsx_files_to_mongodb(dir_path: str = "raw/local"):
     """
     Scans the 'csv/' subfolder inside dir_path for .xlsx/.xlsm files.
     Each sheet becomes its own MongoDB collection under 'personal_knowledge_ai'.
-    Sheets with no detectable header or no data rows are skipped (e.g. summary/title sheets).
+    Sheets with no detectable header or no data rows are skipped.
     Uses hash-based dedup and _ingest_metadata change tracking identical to the CSV importer.
     """
     try:
@@ -205,16 +224,12 @@ def import_xlsx_files_to_mongodb(dir_path: str = "raw/local"):
     except ImportError:
         raise ImportError("openpyxl is required. Install it with: uv add openpyxl")
 
-    mongo_uri = os.getenv("MONGO_URI", "mongodb://localhost:27017/")
-    client = MongoClient(mongo_uri)
-    db = client["personal_knowledge_ai"]
-    metadata_col = db["_ingest_metadata"]
-
     xlsx_dir = os.path.join(dir_path, "csv")
     if not os.path.exists(xlsx_dir):
         print(f"XLSX directory {xlsx_dir} not found. Skipping XLSX import.")
         return {"status": "skipped", "message": "Directory not found."}
 
+    db, meta_col = _open_db()
     imported_sheets = 0
     skipped_files = 0
     skipped_sheets = 0
@@ -224,17 +239,15 @@ def import_xlsx_files_to_mongodb(dir_path: str = "raw/local"):
             continue
 
         file_path = os.path.join(xlsx_dir, filename)
+        meta_key = f"xlsx/{filename}"
 
         try:
-            mtime = os.path.getmtime(file_path)
-            last_modified = datetime.datetime.fromtimestamp(mtime, datetime.timezone.utc).isoformat()
+            last_modified = _get_mtime(file_path)
         except Exception as e:
             print(f"Failed to read file status for {filename}: {e}")
             continue
 
-        meta_key = f"xlsx/{filename}"
-        meta = metadata_col.find_one({"filepath": meta_key})
-        if meta and meta.get("last_modified") == last_modified:
+        if _is_unchanged(meta_col, meta_key, last_modified):
             skipped_files += 1
             print(f"Skipping XLSX file (unchanged): {filename}")
             continue
@@ -247,6 +260,7 @@ def import_xlsx_files_to_mongodb(dir_path: str = "raw/local"):
             continue
 
         file_sheets_imported = 0
+
         for sheet_name in wb.sheetnames:
             ws = wb[sheet_name]
             all_rows = list(ws.iter_rows(values_only=True))
@@ -256,7 +270,7 @@ def import_xlsx_files_to_mongodb(dir_path: str = "raw/local"):
                 skipped_sheets += 1
                 continue
 
-            # Find the header row: first row where >=50% of cells are non-empty
+            # Find the header row: first row where ≥50% of cells are non-empty
             header_row_idx = None
             headers = None
             for i, row in enumerate(all_rows):
@@ -274,7 +288,7 @@ def import_xlsx_files_to_mongodb(dir_path: str = "raw/local"):
                 skipped_sheets += 1
                 continue
 
-            data_rows = all_rows[header_row_idx + 1:]
+            data_rows = all_rows[header_row_idx + 1 :]
             if not data_rows:
                 print(f"  Sheet '{sheet_name}': no data rows, skipping.")
                 skipped_sheets += 1
@@ -282,7 +296,6 @@ def import_xlsx_files_to_mongodb(dir_path: str = "raw/local"):
 
             rows = []
             for row in data_rows:
-                # Pad row to header length if needed
                 cells = list(row) + [None] * max(0, len(headers) - len(row))
                 doc = {}
                 has_value = False
@@ -301,15 +314,16 @@ def import_xlsx_files_to_mongodb(dir_path: str = "raw/local"):
                 continue
 
             collection_name = _xlsx_sheet_to_collection_name(sheet_name)
-            print(f"  Sheet '{sheet_name}' -> collection '{collection_name}' ({len(rows)} rows)")
+            print(
+                f"  Sheet '{sheet_name}' -> collection '{collection_name}' ({len(rows)} rows)"
+            )
 
             operations = []
             for row in rows:
-                row_hash = hashlib.sha256(
-                    json.dumps(row, sort_keys=True, ensure_ascii=False, default=str).encode("utf-8")
-                ).hexdigest()
-                row["_row_key"] = row_hash
-                operations.append(ReplaceOne({"_row_key": row_hash}, row, upsert=True))
+                row["_row_key"] = _row_hash(row)
+                operations.append(
+                    ReplaceOne({"_row_key": row["_row_key"]}, row, upsert=True)
+                )
 
             try:
                 db[collection_name].bulk_write(operations)
@@ -318,14 +332,8 @@ def import_xlsx_files_to_mongodb(dir_path: str = "raw/local"):
             except Exception as e:
                 print(f"  Failed to write collection '{collection_name}': {e}")
 
-        metadata_col.update_one(
-            {"filepath": meta_key},
-            {"$set": {
-                "last_modified": last_modified,
-                "updated_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
-                "sheets_imported": file_sheets_imported,
-            }},
-            upsert=True
+        _update_meta(
+            meta_col, meta_key, last_modified, sheets_imported=file_sheets_imported
         )
 
     return {

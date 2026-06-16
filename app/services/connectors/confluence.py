@@ -12,6 +12,7 @@ try:
 except ImportError:
     BeautifulSoup = None
 
+
 class ConfluenceConnector(BaseConnector):
     def __init__(self, url: str, username: str, token: str, space_key: str):
         """
@@ -43,7 +44,10 @@ class ConfluenceConnector(BaseConnector):
 
             # Fetch pages up to a limit of 100 pages
             pages = confluence.get_all_pages_from_space(
-                self.space_key, start=0, limit=100, expand="body.storage,version,history"
+                self.space_key,
+                start=0,
+                limit=100,
+                expand="body.storage,version,history",
             )
 
             for page in pages:
@@ -52,7 +56,7 @@ class ConfluenceConnector(BaseConnector):
 
                 # Get detailed body
                 body_storage = page.get("body", {}).get("storage", {}).get("value", "")
-                
+
                 # HTML tag stripping
                 if BeautifulSoup:
                     soup = BeautifulSoup(body_storage, "html.parser")
@@ -65,11 +69,13 @@ class ConfluenceConnector(BaseConnector):
                 history = page.get("history", {})
                 last_updated = history.get("lastUpdated", {}).get("when")
                 if not last_updated:
-                    last_updated = datetime.datetime.now(datetime.timezone.utc).isoformat()
+                    last_updated = datetime.datetime.now(
+                        datetime.timezone.utc
+                    ).isoformat()
 
                 # Source URL construct
                 source_url = f"{self.url}/wiki/spaces/{self.space_key}/pages/{page_id}"
-                
+
                 # Path construct
                 safe_title = re.sub(r'[\\/*?:"<>|]', "_", title)
                 path = f"{self.space_key}/{safe_title}.md"

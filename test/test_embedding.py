@@ -9,6 +9,7 @@ from app.services.embedding import (
     get_embedding_service,
 )
 
+
 class TestEmbeddingService(unittest.TestCase):
     def setUp(self):
         load_dotenv()
@@ -21,7 +22,7 @@ class TestEmbeddingService(unittest.TestCase):
 
         service = GeminiEmbeddingService(api_key=self.api_key)
         vector = service.embed_text("test query")
-        
+
         self.assertIsInstance(vector, list)
         self.assertEqual(len(vector), 768)
         self.assertTrue(all(isinstance(x, float) for x in vector))
@@ -48,7 +49,7 @@ class TestEmbeddingService(unittest.TestCase):
         service = GeminiEmbeddingService(api_key=self.api_key)
         texts = ["hello", "", "world"]
         vectors = service.embed_batch(texts)
-        
+
         self.assertEqual(len(vectors), 3)
         self.assertEqual(len(vectors[0]), 768)
         self.assertEqual(vectors[1], [0.0] * 768)
@@ -63,5 +64,5 @@ class TestEmbeddingService(unittest.TestCase):
             self.assertIsInstance(service, ModernBERTEmbeddingService)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     unittest.main()

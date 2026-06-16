@@ -1,6 +1,7 @@
 from dotenv import load_dotenv
-load_dotenv()
 from app.agent import create_conversational_agent
+
+load_dotenv()
 
 agent = create_conversational_agent(temperature=0.0)
 

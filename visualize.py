@@ -1,44 +1,48 @@
 import os
 import pickle
 import json
-import networkx as nx
+
 
 def main():
     graph_path = "graph/graph.pkl"
     output_path = "graph/visualizer.html"
-    
+
     if not os.path.exists(graph_path):
         print(f"Error: {graph_path} not found. Please run ingestion first.")
         return
-        
+
     print(f"Loading knowledge graph from {graph_path}...")
     with open(graph_path, "rb") as f:
         g = pickle.load(f)
-        
+
     print(f"Graph loaded: {g.number_of_nodes()} nodes, {g.number_of_edges()} edges.")
-    
+
     # 1. Convert to D3-friendly structure
     nodes = []
     for n, data in g.nodes(data=True):
-        nodes.append({
-            "id": n,
-            "type": data.get("type", "CONCEPT"),
-            "description": data.get("description", ""),
-            "aliases": data.get("aliases", []),
-            "source_docs": data.get("source_docs", [])
-        })
-        
+        nodes.append(
+            {
+                "id": n,
+                "type": data.get("type", "CONCEPT"),
+                "description": data.get("description", ""),
+                "aliases": data.get("aliases", []),
+                "source_docs": data.get("source_docs", []),
+            }
+        )
+
     links = []
     for u, v, key, data in g.edges(keys=True, data=True):
-        links.append({
-            "source": u,
-            "target": v,
-            "predicate": data.get("predicate", ""),
-            "source_doc": data.get("source_doc", "")
-        })
-        
+        links.append(
+            {
+                "source": u,
+                "target": v,
+                "predicate": data.get("predicate", ""),
+                "source_doc": data.get("source_doc", ""),
+            }
+        )
+
     graph_json = json.dumps({"nodes": nodes, "links": links}, indent=2)
-    
+
     # 2. Standalone HTML template with D3.js
     html_content = f"""<!DOCTYPE html>
 <html lang="en">
@@ -460,11 +464,14 @@ def main():
 </body>
 </html>
 """
-    
+
     with open(output_path, "w", encoding="utf-8") as f:
         f.write(html_content)
-        
-    print(f"\nSuccess! Open this file in your browser to view the interactive graph:\nfile://{os.path.abspath(output_path)}")
+
+    print(
+        f"\nSuccess! Open this file in your browser to view the interactive graph:\nfile://{os.path.abspath(output_path)}"
+    )
+
 
 if __name__ == "__main__":
     main()

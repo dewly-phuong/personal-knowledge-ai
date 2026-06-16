@@ -4,6 +4,7 @@ from qdrant_client import QdrantClient
 from qdrant_client.models import Distance, VectorParams, PointStruct
 from app.services.embedding import EmbeddingService
 
+
 class QdrantSyncManager:
     def __init__(
         self,
@@ -28,7 +29,7 @@ class QdrantSyncManager:
         try:
             collections = self.client.get_collections().collections
             collection_names = [c.name for c in collections]
-            
+
             if self.collection_name not in collection_names:
                 print(f"Creating Qdrant collection '{self.collection_name}'...")
                 self.client.create_collection(
@@ -39,7 +40,9 @@ class QdrantSyncManager:
         except Exception as e:
             print(f"Error checking/creating Qdrant collection: {e}")
 
-    def upsert_page(self, file_path: str, title: str, content: str, source_urls: List[str]):
+    def upsert_page(
+        self, file_path: str, title: str, content: str, source_urls: List[str]
+    ):
         """
         Embeds the page content and upserts the vector + payload to Qdrant Cloud.
         """

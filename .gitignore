@@ -230,7 +230,7 @@ __marimo__/
 # Streamlit
 .streamlit/secrets.toml
 
-raw/**/*.md
+raw/**
 wiki/**/*.md
 graph/*
 GEMINI.md

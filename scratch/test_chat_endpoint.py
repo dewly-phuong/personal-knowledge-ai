@@ -1,14 +1,14 @@
 import asyncio
 import httpx
-import json
+
 
 async def main():
     url = "http://127.0.0.1:8000/api/chat"
     payload = {
         "query": "Tìm kiếm thông tin về qmd và các tính năng chính của nó",
-        "chat_history": []
+        "chat_history": [],
     }
-    
+
     print("Connecting to /api/chat...")
     try:
         async with httpx.AsyncClient(timeout=90.0) as client:
@@ -21,6 +21,7 @@ async def main():
                     print(f"LINE: {line}")
     except Exception as e:
         print(f"Connection/Stream Error: {e}")
+
 
 if __name__ == "__main__":
     asyncio.run(main())
