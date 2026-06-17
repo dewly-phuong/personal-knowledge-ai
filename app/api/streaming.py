@@ -105,9 +105,10 @@ async def chat_generator(
                     )
                     new_messages = msgs
 
-        cost = _cost_tracker.add(total_input, total_output)
-        await history_manager.append_turn(session_id, query, output, new_messages)
-        yield f"data: {json.dumps({'type': 'done', 'output': output, 'usage': {'input': total_input, 'output': total_output}, 'cost': cost})}\n\n"
-
     except Exception as e:
         yield f"data: {json.dumps({'type': 'error', 'error': str(e)})}\n\n"
+
+    cost = _cost_tracker.add(total_input, total_output)
+    if output or new_messages:
+        await history_manager.append_turn(session_id, query, output, new_messages)
+    yield f"data: {json.dumps({'type': 'done', 'output': output, 'usage': {'input': total_input, 'output': total_output}, 'cost': cost})}\n\n"

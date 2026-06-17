@@ -1,3 +1,4 @@
+import asyncio
 import json
 import re
 
@@ -14,8 +15,9 @@ async def trigger_ingest(body: IngestRequest):
     """Triggers background document ingestion and returns a task ID."""
     from app.tools import ingest_source
 
-    res = ingest_source.invoke(
-        {"source": body.source, "path_or_repo": body.path_or_repo}
+    loop = asyncio.get_running_loop()
+    res = await loop.run_in_executor(
+        None, ingest_source.invoke, {"source": body.source, "path_or_repo": body.path_or_repo}
     )
     match = re.search(r"Task ID: ([a-f0-9\-]+)", res)
     task_id = match.group(1) if match else "unknown"

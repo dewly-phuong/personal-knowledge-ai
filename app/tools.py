@@ -13,6 +13,18 @@ from app.services.wiki_search import WikiSearchService
 from app.services.graph_store import GraphStore
 
 _wiki = WikiSearchService()
+_mongo_client = None
+_mongo_lock = threading.Lock()
+
+
+def _get_mongo_db():
+    global _mongo_client
+    if _mongo_client is None:
+        with _mongo_lock:
+            if _mongo_client is None:
+                from pymongo import MongoClient
+                _mongo_client = MongoClient(os.getenv("MONGO_URI", "mongodb://localhost:27017/"))
+    return _mongo_client["personal_knowledge_ai"]
 
 
 @tool
@@ -97,7 +109,7 @@ def _run_ingest_async(task_id: str, source: str, path_or_repo: str) -> None:
             "error": str(e),
             "summary": "Ingestion failed with error.",
         }
-    r.set(task_key, json.dumps(task_data))
+    r.set(task_key, json.dumps(task_data), ex=7 * 86400)
 
 
 def _schedule_ingest(source: str, path_or_repo: str, summary: str) -> str:
@@ -115,6 +127,7 @@ def _schedule_ingest(source: str, path_or_repo: str, summary: str) -> str:
                 "summary": summary,
             }
         ),
+        ex=7 * 86400,
     )
     threading.Thread(
         target=_run_ingest_async, args=(task_id, source, path_or_repo), daemon=True
@@ -336,10 +349,7 @@ def mongodb_query(
     """
     limit = min(max(1, limit), 1000)
     try:
-        from pymongo import MongoClient
-
-        client = MongoClient(os.getenv("MONGO_URI", "mongodb://localhost:27017/"))
-        db = client["personal_knowledge_ai"]
+        db = _get_mongo_db()
 
         allowed = db.list_collection_names()
         if collection not in allowed:
