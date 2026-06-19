@@ -4,6 +4,7 @@ import json
 import datetime
 import threading
 import uuid
+import contextvars
 from typing import List, Dict
 
 from langchain_core.tools import tool
@@ -11,6 +12,43 @@ from langchain_core.tools import tool
 from app.core.redis import get_redis_client
 from app.services.wiki_search import WikiSearchService
 from app.services.graph_store import GraphStore
+
+# Contextvars accumulator — lets callers (e.g. eval model_callback) collect
+# retrieval chunks for a single agent.invoke() call without deepeval tracing.
+_retrieval_accumulator: contextvars.ContextVar[list | None] = contextvars.ContextVar(
+    "retrieval_accumulator", default=None
+)
+
+
+def start_retrieval_capture() -> None:
+    """Reset and activate the per-invocation retrieval accumulator."""
+    _retrieval_accumulator.set([])
+
+
+def pop_retrieval_capture() -> List[str]:
+    """Return accumulated retrieval chunks and deactivate the accumulator."""
+    chunks = _retrieval_accumulator.get() or []
+    _retrieval_accumulator.set(None)
+    return chunks
+
+
+def _register_retrieval(chunks: List[str]) -> None:
+    """Append retrieval chunks to the active deepeval trace and/or local accumulator."""
+    # Local accumulator (used by eval model_callback)
+    acc = _retrieval_accumulator.get()
+    if acc is not None:
+        acc.extend(chunks)
+    # deepeval trace (no-op when not tracing)
+    try:
+        from deepeval.tracing.tracing import current_trace_context
+        from deepeval.tracing import update_current_trace
+
+        trace = current_trace_context.get()
+        if trace is not None:
+            existing = getattr(trace, "retrieval_context", None) or []
+            update_current_trace(retrieval_context=existing + chunks)
+    except Exception:
+        pass
 
 _wiki = WikiSearchService()
 _mongo_client = None
@@ -23,7 +61,10 @@ def _get_mongo_db():
         with _mongo_lock:
             if _mongo_client is None:
                 from pymongo import MongoClient
-                _mongo_client = MongoClient(os.getenv("MONGO_URI", "mongodb://localhost:27017/"))
+
+                _mongo_client = MongoClient(
+                    os.getenv("MONGO_URI", "mongodb://localhost:27017/")
+                )
     return _mongo_client["personal_knowledge_ai"]
 
 
@@ -38,9 +79,60 @@ def wiki_search(query: str) -> str:
     """
     Search across the compiled wiki pages using hybrid search (BM25 full-text + Qdrant vector cosine similarity).
     Use this when the user asks questions that require matching terms or reading documentation contents.
+    IMPORTANT: If searching for information about a specific entity, project, service, pipeline, or object, 
+    you MUST first call `graph_traverse` to retrieve its relationships from the knowledge graph before calling this tool.
     Returns the top 5 relevant snippets with their file paths.
     """
-    return _wiki.search(query)
+    result = _wiki.search(query)
+    # Split on double-newline boundaries to register individual snippets
+    chunks = [c.strip() for c in result.split("\n\n") if c.strip()]
+    _register_retrieval(chunks)
+    return result
+
+
+@tool
+def entity_search(entity_name: str, query: str) -> str:
+    """
+    Combined entity lookup: finds direct relationships for entity_name from the knowledge graph,
+    then performs wiki search with query expanded by related entity names for higher recall.
+    Use this instead of calling graph_traverse + wiki_search separately when investigating
+    a specific entity, service, pipeline, project, or object.
+    Returns a compact graph summary followed by top wiki snippets.
+    """
+    store = GraphStore()
+    # 1-hop only for the graph context shown to agent (less noise);
+    # 2-hop neighbor names still used for query expansion (higher recall)
+    subg_1hop = store.get_subgraph(entity_name, hops=1)
+    subg_2hop = store.get_subgraph(entity_name, hops=2)
+
+    canonical = entity_name
+    if not subg_1hop or not subg_1hop["nodes"]:
+        all_nodes = list(store.graph.nodes)
+        matches = [n for n in all_nodes if n.lower().strip() == entity_name.lower().strip()]
+        if matches:
+            canonical = matches[0]
+            subg_1hop = store.get_subgraph(canonical, hops=1)
+            subg_2hop = store.get_subgraph(canonical, hops=2)
+
+    if subg_1hop and subg_1hop["nodes"]:
+        # compact: "Source --[predicate]--> Target" per edge, skip self-referential noise
+        edge_lines = [
+            f"{e['source']} --[{e['predicate']}]--> {e['target']}"
+            for e in subg_1hop["edges"]
+        ]
+        graph_context = f"Relations for '{canonical}': " + (
+            " | ".join(edge_lines) if edge_lines else "no direct relations"
+        )
+        # 2-hop names for query expansion only
+        neighbor_names = [n["id"] for n in subg_2hop["nodes"] if n["id"] != canonical]
+        expanded_query = f"{query} {canonical} {' '.join(neighbor_names[:10])}"
+    else:
+        graph_context = f"'{entity_name}' not found in knowledge graph."
+        expanded_query = f"{query} {entity_name}"
+
+    search_results = _wiki.search(expanded_query)
+    _register_retrieval([graph_context, search_results])
+    return f"[Graph] {graph_context}\n\n[Wiki]\n{search_results}"
 
 
 @tool
@@ -48,6 +140,8 @@ def graph_traverse(entity_name: str) -> str:
     """
     Retrieve relationships for a given entity from the knowledge graph up to 2 hops.
     Use this to traverse the dependencies, pipeline flows, or ownership of services/components.
+    Always call this tool first when investigating a specific entity, service, pipeline, project, or object, 
+    before using `wiki_search` to find detailed documentation.
     Returns entity details and serialized triples in the format (A) --[predicate]--> (B).
     """
     store = GraphStore()
@@ -70,12 +164,14 @@ def graph_traverse(entity_name: str) -> str:
         f"  ({e['source']}) --[{e['predicate']}]--> ({e['target']})"
         for e in subg["edges"]
     ]
-    return (
+    result = (
         f"Subgraph for '{entity_name}' (up to 2 hops):\n\n"
         "Entities involved:\n" + "\n".join(node_descriptions) + "\n\n"
         "Relationships:\n"
         + ("\n".join(triples) if triples else "  No relations found.")
     )
+    _register_retrieval([result])
+    return result
 
 
 # ── Ingestion helpers ─────────────────────────────────────────────────────────
@@ -254,6 +350,7 @@ def mongodb_query(
     Query structured company data from MongoDB. Use this when you need exact facts about employees,
     projects, bug tracking, KPIs, organizational charts, payroll, attendance, CRM customers,
     sprint tickets, revenue, recruitment, AI model registry, or infrastructure costs.
+    filter_json should use regular MongoDB query syntax. example: '{"status": {"$regex": "Muon", "$options": "i}}' to find late employees.
 
     Available Collections & Schemas:
 
@@ -264,6 +361,9 @@ def mongodb_query(
     2. 'projects': Technical and business projects.
        - Fields: id, name, code, description, type, status, phase, priority, start_date, deadline,
          budget_vnd, spent_vnd, progress_percent, tech_stack, team, milestones, risks, kpi
+       - IMPORTANT: project `name` field contains full names (e.g. "DataPulse – Business Intelligence Dashboard").
+         Always use regex for name search: {"name": {"$regex": "DataPulse", "$options": "i"}}
+         Or search by `code` field (exact, uppercase): {"code": "DATAPULSE"}
     3. 'bug_tracker': Reported software/system bugs.
        - Fields: id, title, description, project_code, severity, priority, status, reporter_id,
          assignee_id, created_at, closed_at, resolution
@@ -339,6 +439,9 @@ def mongodb_query(
           status, champion, experiment_id, note
         - status ENUM: "Active", "Retired", "Staging"
         - champion: True/False — whether this is the current production champion model
+        - NOTE: All "villm-*" models (villm-intent-*, villm-ner-*) belong to the VisionChat product.
+          To find VisionChat NLP models, query by model_name with regex: {"model_name": {"$regex": "villm"}}
+          For overall VisionChat accuracy (combined metric), also check wiki/changelog via entity_search.
 
     Args:
         collection (str): One of the 13 collections listed above.

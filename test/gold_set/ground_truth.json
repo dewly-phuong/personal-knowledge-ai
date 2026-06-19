@@ -1,26 +1,56 @@
 {
-  "auth_service.md": {
+  "system_architecture.md": {
     "entities": [
-      {"name": "Auth Service", "type": "SERVICE"},
-      {"name": "Platform Team", "type": "ORGANIZATION"},
-      {"name": "User Database", "type": "DATABASE"},
-      {"name": "Redis", "type": "DATABASE"}
+      {"name": "TechVision AI Platform", "type": "ORGANIZATION"},
+      {"name": "api-gateway",            "type": "SERVICE"},
+      {"name": "auth-service",           "type": "SERVICE"},
+      {"name": "bot-engine",             "type": "SERVICE"},
+      {"name": "nlu-service",            "type": "SERVICE"},
+      {"name": "rag-engine",             "type": "SERVICE"},
+      {"name": "channel-adapter",        "type": "SERVICE"},
+      {"name": "knowledge-indexer",      "type": "SERVICE"},
+      {"name": "PostgreSQL",             "type": "DATABASE"},
+      {"name": "Redis",                  "type": "DATABASE"},
+      {"name": "Weaviate",               "type": "DATABASE"},
+      {"name": "Kafka",                  "type": "PIPELINE"}
     ],
     "relations": [
-      {"source": "Auth Service", "predicate": "owned by", "target": "Platform Team"},
-      {"source": "Auth Service", "predicate": "depends on", "target": "User Database"},
-      {"source": "Auth Service", "predicate": "depends on", "target": "Redis"}
+      {"source": "api-gateway",      "predicate": "routes to",    "target": "auth-service"},
+      {"source": "api-gateway",      "predicate": "routes to",    "target": "channel-adapter"},
+      {"source": "bot-engine",       "predicate": "calls",        "target": "nlu-service"},
+      {"source": "bot-engine",       "predicate": "calls",        "target": "rag-engine"},
+      {"source": "bot-engine",       "predicate": "writes to",    "target": "PostgreSQL"},
+      {"source": "bot-engine",       "predicate": "uses",         "target": "Redis"},
+      {"source": "rag-engine",       "predicate": "queries",      "target": "Weaviate"},
+      {"source": "channel-adapter",  "predicate": "publishes to", "target": "Kafka"},
+      {"source": "knowledge-indexer","predicate": "indexes to",   "target": "Weaviate"}
     ]
   },
-  "payment_pipeline.md": {
+  "visionchat_prd.md": {
     "entities": [
-      {"name": "Payment Processing Pipeline", "type": "PIPELINE"},
-      {"name": "Auth Service", "type": "SERVICE"},
-      {"name": "Finance Service", "type": "SERVICE"}
+      {"name": "VisionChat",          "type": "SERVICE"},
+      {"name": "TechVision AI",       "type": "ORGANIZATION"},
+      {"name": "Ngô Thị Kiều Oanh",  "type": "PERSON"},
+      {"name": "Phạm Đức Hùng",      "type": "PERSON"},
+      {"name": "NLU Service",         "type": "SERVICE"},
+      {"name": "RAG Engine",          "type": "SERVICE"},
+      {"name": "Weaviate",            "type": "DATABASE"},
+      {"name": "PostgreSQL",          "type": "DATABASE"},
+      {"name": "Redis",               "type": "DATABASE"},
+      {"name": "Zalo OA",             "type": "SERVICE"},
+      {"name": "Facebook Messenger",  "type": "SERVICE"}
     ],
     "relations": [
-      {"source": "Payment Processing Pipeline", "predicate": "depends on", "target": "Auth Service"},
-      {"source": "Payment Processing Pipeline", "predicate": "operated by", "target": "Finance Service"}
+      {"source": "Ngô Thị Kiều Oanh", "predicate": "authored",    "target": "VisionChat"},
+      {"source": "Phạm Đức Hùng",     "predicate": "approved",    "target": "VisionChat"},
+      {"source": "TechVision AI",      "predicate": "builds",      "target": "VisionChat"},
+      {"source": "VisionChat",         "predicate": "integrates",  "target": "Zalo OA"},
+      {"source": "VisionChat",         "predicate": "integrates",  "target": "Facebook Messenger"},
+      {"source": "VisionChat",         "predicate": "uses",        "target": "NLU Service"},
+      {"source": "VisionChat",         "predicate": "uses",        "target": "RAG Engine"},
+      {"source": "RAG Engine",         "predicate": "queries",     "target": "Weaviate"},
+      {"source": "VisionChat",         "predicate": "stores in",   "target": "PostgreSQL"},
+      {"source": "VisionChat",         "predicate": "caches in",   "target": "Redis"}
     ]
   }
 }

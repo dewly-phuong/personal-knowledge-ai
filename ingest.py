@@ -18,6 +18,7 @@ from app.services.compiler import WikiCompiler
 from app.services.embedding import get_embedding_service
 from app.services.qdrant_sync import QdrantSyncManager
 from app.core.redis import get_redis_client
+from app.services.wiki_search import invalidate_wiki_cache
 from app.services.mongodb_import import (
     import_json_files_to_mongodb,
     import_csv_files_to_mongodb,
@@ -113,7 +114,7 @@ def _init_vector_services(api_key: str):
 
     try:
         print("Initializing embedding service...")
-        embedding_service = get_embedding_service(api_key=api_key)
+        embedding_service = get_embedding_service(api_key=None)
         print("Connecting to Qdrant Cloud...")
         qdrant_manager = QdrantSyncManager(
             url=qdrant_url,
@@ -268,12 +269,9 @@ def run_ingest_pipeline(
     GraphStore().save()
     state_manager.save()
 
-    # 7. Invalidate Redis wiki cache
-    try:
-        get_redis_client().delete("wiki:cache")
-        print("Invalidated wiki cache in Redis.")
-    except Exception as e:
-        print(f"Failed to invalidate wiki cache: {e}")
+    # 7. Invalidate wiki cache (Redis + in-process BM25 index)
+    invalidate_wiki_cache()
+    print("Invalidated wiki cache.")
 
     # 8. Regenerate wiki index
     WikiCompiler(api_key=api_key).generate_index_page()

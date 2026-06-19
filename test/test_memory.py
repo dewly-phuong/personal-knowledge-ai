@@ -16,12 +16,31 @@ def async_test(coro):
     return wrapper
 
 
+class _FakeRedis:
+    """In-memory Redis stub — lets session tests run without a live Redis server."""
+
+    def __init__(self):
+        self._store = {}
+
+    def get(self, key):
+        return self._store.get(key)
+
+    def set(self, key, value, ex=None):
+        self._store[key] = value
+
+    def delete(self, key):
+        self._store.pop(key, None)
+
+    def ping(self):
+        return True
+
+
 class TestMemorySystem(unittest.TestCase):
     def setUp(self):
         load_dotenv()
         self.session_id = "test-session-12345"
         self.mongo_uri = os.getenv("MONGO_URI", "mongodb://localhost:27017/")
-        self.store = SessionStore(mongo_uri=self.mongo_uri)
+        self.store = SessionStore(redis_client=_FakeRedis(), mongo_uri=self.mongo_uri)
         self.manager = HistoryManager(store=self.store)
 
     def tearDown(self):
@@ -142,38 +161,34 @@ class TestMemorySystem(unittest.TestCase):
 
     @async_test
     async def test_history_manager_with_tools(self):
-        from langchain_core.agents import AgentAction
+        # append_turn now accepts new_messages: List[AnyMessage] directly (no AgentAction)
         from langchain_core.messages import AIMessage, ToolMessage
 
-        action = AgentAction(
-            tool="wiki_search",
-            tool_input="knowledge graph",
-            log="Calling wiki_search...",
-        )
-        object.__setattr__(
-            action,
-            "message_log",
-            [
-                AIMessage(
-                    content="",
-                    tool_calls=[
-                        {
-                            "name": "wiki_search",
-                            "args": {"query": "knowledge graph"},
-                            "id": "call_1",
-                        }
-                    ],
-                )
-            ],
-        )
-
-        intermediate_steps = [(action, "Wiki results content")]
+        new_messages = [
+            HumanMessage(content="Explain knowledge graph"),
+            AIMessage(
+                content="",
+                tool_calls=[
+                    {
+                        "name": "wiki_search",
+                        "args": {"query": "knowledge graph"},
+                        "id": "call_1",
+                    }
+                ],
+            ),
+            ToolMessage(
+                content="Wiki results content",
+                tool_call_id="call_1",
+                name="wiki_search",
+            ),
+            AIMessage(content="A knowledge graph is..."),
+        ]
 
         await self.manager.append_turn(
             self.session_id,
             "Explain knowledge graph",
             "A knowledge graph is...",
-            intermediate_steps,
+            new_messages,
         )
         await self.store.flush()
 
@@ -181,11 +196,11 @@ class TestMemorySystem(unittest.TestCase):
         self.assertEqual(len(context), 4)
         self.assertEqual(context[0].content, "Explain knowledge graph")
 
-        self.assertTrue(isinstance(context[1], AIMessage))
+        self.assertIsInstance(context[1], AIMessage)
         self.assertEqual(context[1].tool_calls[0]["name"], "wiki_search")
         self.assertEqual(context[1].tool_calls[0]["id"], "call_1")
 
-        self.assertTrue(isinstance(context[2], ToolMessage))
+        self.assertIsInstance(context[2], ToolMessage)
         self.assertEqual(context[2].content, "Wiki results content")
         self.assertEqual(context[2].tool_call_id, "call_1")
 

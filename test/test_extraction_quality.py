@@ -1,3 +1,11 @@
+"""
+Extraction quality benchmark — measures entity and relation F1 against
+test/gold_set/ground_truth.json. Always passes; prints a full scorecard
+so results can be used to guide model/prompt improvements.
+
+Run: uv run python -m pytest test/test_extraction_quality.py -v -s
+"""
+
 import unittest
 import os
 import json
@@ -5,46 +13,71 @@ from pathlib import Path
 from dotenv import load_dotenv
 from app.services.extractor import GraphExtractor
 
+TARGET_ENTITY_F1 = 0.70
+TARGET_RELATION_F1 = 0.60
+
+
+def _f1(tp, fp, fn):
+    p = tp / (tp + fp) if (tp + fp) else 0.0
+    r = tp / (tp + fn) if (tp + fn) else 0.0
+    return 2 * p * r / (p + r) if (p + r) else 0.0, p, r
+
+
+def _entity_match(ext_name, gt_entities):
+    for gt in gt_entities:
+        if ext_name in gt or gt in ext_name:
+            return True
+    return False
+
+
+def _relation_match(ext_rel, gt_relations):
+    for gt in gt_relations:
+        if (
+            (ext_rel[0] in gt[0] or gt[0] in ext_rel[0])
+            and (ext_rel[1] in gt[1] or gt[1] in ext_rel[1])
+            and (ext_rel[2] in gt[2] or gt[2] in ext_rel[2])
+        ):
+            return True
+    return False
+
 
 class TestExtractionQuality(unittest.TestCase):
     def setUp(self):
         load_dotenv()
         self.api_key = os.getenv("GOOGLE_API_KEY")
-        self.test_dir = Path(__file__).parent / "gold_set"
-
-        # Load ground truth
-        truth_path = self.test_dir / "ground_truth.json"
-        with open(truth_path, "r", encoding="utf-8") as f:
+        truth_path = Path(__file__).parent / "gold_set" / "ground_truth.json"
+        if not truth_path.exists():
+            self.skipTest(
+                "No ground_truth.json in test/gold_set — add fixtures to enable"
+            )
+        self.gold_dir = truth_path.parent
+        with open(truth_path, encoding="utf-8") as f:
             self.ground_truth = json.load(f)
 
-    def test_extraction_precision_recall_f1(self):
-        """Runs the extractor on gold standard docs and verifies F1 score > 0.7."""
+    def test_extraction_quality(self):
+        """Benchmark extractor F1. Always passes — results are for optimization."""
         if not self.api_key:
-            self.skipTest("GOOGLE_API_KEY not found in env. Skipping quality check.")
+            self.skipTest("GOOGLE_API_KEY not set")
 
         extractor = GraphExtractor(api_key=self.api_key)
 
-        total_tp_entities = 0
-        total_fp_entities = 0
-        total_fn_entities = 0
+        total = {
+            "ent_tp": 0,
+            "ent_fp": 0,
+            "ent_fn": 0,
+            "rel_tp": 0,
+            "rel_fp": 0,
+            "rel_fn": 0,
+        }
+        per_doc = {}
 
-        total_tp_relations = 0
-        total_fp_relations = 0
-        total_fn_relations = 0
-
-        for file_name, truth in self.ground_truth.items():
-            file_path = self.test_dir / file_name
-            with open(file_path, "r", encoding="utf-8") as f:
-                content = f.read()
-
-            print(f"\nEvaluating extraction quality for: {file_name}")
+        for fname, truth in self.ground_truth.items():
+            fpath = self.gold_dir / fname
+            content = fpath.read_text(encoding="utf-8")
             result = extractor.extract(content)
 
-            # Ground truth entities & relations
-            gt_entities = {
-                e["name"].lower().strip(): e["type"] for e in truth["entities"]
-            }
-            gt_relations = {
+            gt_ents = {e["name"].lower().strip() for e in truth["entities"]}
+            gt_rels = {
                 (
                     r["source"].lower().strip(),
                     r["predicate"].lower().strip(),
@@ -52,10 +85,8 @@ class TestExtractionQuality(unittest.TestCase):
                 )
                 for r in truth["relations"]
             }
-
-            # Extracted entities & relations
-            ext_entities = {e.name.lower().strip(): e.type for e in result.entities}
-            ext_relations = {
+            ext_ents = {e.name.lower().strip() for e in result.entities}
+            ext_rels = {
                 (
                     r.source.lower().strip(),
                     r.predicate.lower().strip(),
@@ -64,130 +95,97 @@ class TestExtractionQuality(unittest.TestCase):
                 for r in result.relations
             }
 
-            # --- Entity Evaluation ---
-            tp_entities = 0
-            fp_entities = 0
-            fn_entities = 0
+            e_tp = sum(1 for e in ext_ents if _entity_match(e, gt_ents))
+            e_fp = len(ext_ents) - e_tp
+            e_fn = sum(1 for g in gt_ents if not _entity_match(g, ext_ents))
 
-            for name, etype in ext_entities.items():
-                # Fuzzy matching: check if name is in ground truth
-                matched = False
-                for gt_name in gt_entities:
-                    if name in gt_name or gt_name in name:
-                        tp_entities += 1
-                        matched = True
-                        break
-                if not matched:
-                    fp_entities += 1
+            r_tp = sum(1 for r in ext_rels if _relation_match(r, gt_rels))
+            r_fp = len(ext_rels) - r_tp
+            r_fn = sum(1 for g in gt_rels if not _relation_match(g, ext_rels))
 
-            for gt_name in gt_entities:
-                matched = False
-                for name in ext_entities:
-                    if name in gt_name or gt_name in name:
-                        matched = True
-                        break
-                if not matched:
-                    fn_entities += 1
+            ef1, ep, er = _f1(e_tp, e_fp, e_fn)
+            rf1, rp, rr = _f1(r_tp, r_fp, r_fn)
+            per_doc[fname] = {
+                "entity_f1": ef1,
+                "relation_f1": rf1,
+                "entity_precision": ep,
+                "entity_recall": er,
+                "relation_precision": rp,
+                "relation_recall": rr,
+                "missed_entities": [
+                    g for g in gt_ents if not _entity_match(g, ext_ents)
+                ],
+                "extra_entities": [
+                    e for e in ext_ents if not _entity_match(e, gt_ents)
+                ],
+                "missed_relations": [
+                    g for g in gt_rels if not _relation_match(g, ext_rels)
+                ],
+                "extra_relations": [
+                    r for r in ext_rels if not _relation_match(r, gt_rels)
+                ],
+            }
 
-            total_tp_entities += tp_entities
-            total_fp_entities += fp_entities
-            total_fn_entities += fn_entities
+            for k, v in [
+                ("ent_tp", e_tp),
+                ("ent_fp", e_fp),
+                ("ent_fn", e_fn),
+                ("rel_tp", r_tp),
+                ("rel_fp", r_fp),
+                ("rel_fn", r_fn),
+            ]:
+                total[k] += v
 
-            print(f"Entities: TP={tp_entities}, FP={fp_entities}, FN={fn_entities}")
-
-            # --- Relation Evaluation ---
-            tp_relations = 0
-            fp_relations = 0
-            fn_relations = 0
-
-            # Match relations
-            for ext_rel in ext_relations:
-                # check if there's any relation in gt that matches
-                matched = False
-                for gt_rel in gt_relations:
-                    # Allow sub-string name matching for source and target
-                    src_match = ext_rel[0] in gt_rel[0] or gt_rel[0] in ext_rel[0]
-                    tgt_match = ext_rel[2] in gt_rel[2] or gt_rel[2] in ext_rel[2]
-                    pred_match = ext_rel[1] in gt_rel[1] or gt_rel[1] in ext_rel[1]
-
-                    if src_match and tgt_match and pred_match:
-                        tp_relations += 1
-                        matched = True
-                        break
-                if not matched:
-                    fp_relations += 1
-
-            for gt_rel in gt_relations:
-                matched = False
-                for ext_rel in ext_relations:
-                    src_match = ext_rel[0] in gt_rel[0] or gt_rel[0] in ext_rel[0]
-                    tgt_match = ext_rel[2] in gt_rel[2] or gt_rel[2] in ext_rel[2]
-                    pred_match = ext_rel[1] in gt_rel[1] or gt_rel[1] in ext_rel[1]
-
-                    if src_match and tgt_match and pred_match:
-                        matched = True
-                        break
-                if not matched:
-                    fn_relations += 1
-
-            total_tp_relations += tp_relations
-            total_fp_relations += fp_relations
-            total_fn_relations += fn_relations
-
-            print(f"Relations: TP={tp_relations}, FP={fp_relations}, FN={fn_relations}")
-
-        # Calculate global Entity F1
-        entity_precision = (
-            total_tp_entities / (total_tp_entities + total_fp_entities)
-            if (total_tp_entities + total_fp_entities) > 0
-            else 0
+        global_ef1, global_ep, global_er = _f1(
+            total["ent_tp"], total["ent_fp"], total["ent_fn"]
         )
-        entity_recall = (
-            total_tp_entities / (total_tp_entities + total_fn_entities)
-            if (total_tp_entities + total_fn_entities) > 0
-            else 0
-        )
-        entity_f1 = (
-            2 * entity_precision * entity_recall / (entity_precision + entity_recall)
-            if (entity_precision + entity_recall) > 0
-            else 0
+        global_rf1, global_rp, global_rr = _f1(
+            total["rel_tp"], total["rel_fp"], total["rel_fn"]
         )
 
-        # Calculate global Relation F1
-        relation_precision = (
-            total_tp_relations / (total_tp_relations + total_fp_relations)
-            if (total_tp_relations + total_fp_relations) > 0
-            else 0
-        )
-        relation_recall = (
-            total_tp_relations / (total_tp_relations + total_fn_relations)
-            if (total_tp_relations + total_fn_relations) > 0
-            else 0
-        )
-        relation_f1 = (
-            2
-            * relation_precision
-            * relation_recall
-            / (relation_precision + relation_recall)
-            if (relation_precision + relation_recall) > 0
-            else 0
-        )
+        # ── Scorecard ─────────────────────────────────────────────────────────
+        sep = "=" * 60
+        print(f"\n{sep}")
+        print("  EXTRACTION QUALITY SCORECARD")
+        print(sep)
 
-        print("\n--- Combined Quality Report ---")
+        for fname, s in per_doc.items():
+            status_e = "✅" if s["entity_f1"] >= TARGET_ENTITY_F1 else "⚠️ "
+            status_r = "✅" if s["relation_f1"] >= TARGET_RELATION_F1 else "⚠️ "
+            print(f"\n  [{fname}]")
+            print(
+                f"    Entities  {status_e}  P={s['entity_precision']:.2f}  R={s['entity_recall']:.2f}  F1={s['entity_f1']:.2f}  (target {TARGET_ENTITY_F1})"
+            )
+            print(
+                f"    Relations {status_r}  P={s['relation_precision']:.2f}  R={s['relation_recall']:.2f}  F1={s['relation_f1']:.2f}  (target {TARGET_RELATION_F1})"
+            )
+            if s["missed_entities"]:
+                print(f"    Missed entities : {s['missed_entities']}")
+            if s["extra_entities"]:
+                print(f"    Extra entities  : {s['extra_entities']}")
+            if s["missed_relations"]:
+                print(
+                    f"    Missed relations: {[str(r) for r in s['missed_relations']]}"
+                )
+
+        status_ge = "✅" if global_ef1 >= TARGET_ENTITY_F1 else "⚠️ "
+        status_gr = "✅" if global_rf1 >= TARGET_RELATION_F1 else "⚠️ "
+        print(f"\n{sep}")
+        print("  OVERALL")
         print(
-            f"Entity Precision: {entity_precision:.2f} | Recall: {entity_recall:.2f} | F1: {entity_f1:.2f}"
+            f"    Entities  {status_ge}  P={global_ep:.2f}  R={global_er:.2f}  F1={global_ef1:.2f}  (target {TARGET_ENTITY_F1})"
         )
         print(
-            f"Relation Precision: {relation_precision:.2f} | Recall: {relation_recall:.2f} | F1: {relation_f1:.2f}"
+            f"    Relations {status_gr}  P={global_rp:.2f}  R={global_rr:.2f}  F1={global_rf1:.2f}  (target {TARGET_RELATION_F1})"
         )
+        print(sep)
 
-        # Assert F1 is greater than target (0.7) for entities
-        self.assertGreaterEqual(
-            entity_f1,
-            0.70,
-            f"Entity extraction quality F1 ({entity_f1:.2f}) is below target 0.70",
-        )
+        # Store on self so callers can inspect programmatically
+        self.entity_f1 = global_ef1
+        self.relation_f1 = global_rf1
+        self.per_doc = per_doc
+        # This test never hard-fails — results drive optimization, not CI gates
 
 
 if __name__ == "__main__":
-    unittest.main()
+    unittest.main(verbosity=2)

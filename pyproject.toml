@@ -35,4 +35,12 @@ dependencies = [
     "python-pptx>=1.0.2",
     "markitdown[all]>=0.1.5",
     "plotly>=6.0.0",
+    "deepeval>=1.0.0",
+    "langfuse>=4.9.0",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.0",
+    "pytest-asyncio>=1.4.0",
 ]

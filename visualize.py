@@ -324,13 +324,22 @@ def main():
             .attr("d", "M0,-5L10,0L0,5")
             .attr("fill", "#30363d");
 
+        const degreeMap = {{}};
+        data.links.forEach(l => {{
+            const s = l.source.id || l.source, t = l.target.id || l.target;
+            degreeMap[s] = (degreeMap[s] || 0) + 1;
+            degreeMap[t] = (degreeMap[t] || 0) + 1;
+        }});
+        const maxDeg = Math.max(...Object.values(degreeMap), 1);
+        const rScale = d3.scalePow().exponent(0.7).domain([0, maxDeg]).range([4, 48]);
+
         // Force simulation
         const simulation = d3.forceSimulation(data.nodes)
             .force("link", d3.forceLink(data.links).id(d => d.id).distance(120))
             .force("charge", d3.forceManyBody().strength(-300))
             .force("center", d3.forceCenter(width / 2, height / 2))
-            .force("collision", d3.forceCollide().radius(30));
-            
+            .force("collision", d3.forceCollide().radius(d => rScale(degreeMap[d.id] || 0) + 6));
+
         // Draw links
         const link = container.append("g")
             .attr("class", "links")
@@ -340,7 +349,7 @@ def main():
             .attr("class", "link")
             .attr("stroke", "#30363d")
             .attr("marker-end", "url(#suit)");
-            
+
         // Draw edge labels
         const edgeLabel = container.append("g")
             .selectAll("text")
@@ -351,13 +360,14 @@ def main():
             .text(d => d.predicate);
 
         // Draw nodes
+
         const node = container.append("g")
             .attr("class", "nodes")
             .selectAll("circle")
             .data(data.nodes)
             .enter().append("circle")
             .attr("class", "node")
-            .attr("r", d => d.type === "SERVICE" || d.type === "PIPELINE" ? 12 : 8)
+            .attr("r", d => rScale(degreeMap[d.id] || 0))
             .attr("fill", d => colors[d.type] || defaultColor)
             .attr("stroke", "#0d1117")
             .on("click", (event, d) => showNodeDetails(d))

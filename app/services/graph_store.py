@@ -19,6 +19,7 @@ class GraphStore:
             return
         self.file_path = file_path
         self.graph = self._load_graph()
+        self._undirected_cache = None
         self._initialized = True
 
     def _load_graph(self) -> nx.MultiDiGraph:
@@ -40,13 +41,18 @@ class GraphStore:
 
     def save(self):
         """Serializes the graph back to disk."""
-        # Ensure parent folder exists
         os.makedirs(os.path.dirname(self.file_path), exist_ok=True)
         try:
             with open(self.file_path, "wb") as f:
                 pickle.dump(self.graph, f)
+            self._undirected_cache = None  # invalidate on mutation
         except Exception as e:
             print(f"Error saving graph to {self.file_path}: {e}")
+
+    def _get_undirected(self):
+        if self._undirected_cache is None:
+            self._undirected_cache = self.graph.to_undirected()
+        return self._undirected_cache
 
     def add_entities_and_relations(
         self,
@@ -129,10 +135,9 @@ class GraphStore:
             return {"nodes": [], "edges": []}
 
         # Use networkx ego_graph or single_source_shortest_path_length to get neighborhood
-        undirected = self.graph.to_undirected()
         try:
             lengths = nx.single_source_shortest_path_length(
-                undirected, entity_name, cutoff=hops
+                self._get_undirected(), entity_name, cutoff=hops
             )
             nodes_in_subgraph = list(lengths.keys())
         except Exception:

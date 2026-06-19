@@ -21,6 +21,17 @@ class TestMongoDBDataLayer(unittest.TestCase):
     def setUp(self):
         load_dotenv()
         self.mongo_uri = os.getenv("MONGO_URI", "mongodb://localhost:27017/")
+
+        from pymongo import MongoClient
+        from pymongo.errors import ServerSelectionTimeoutError
+
+        try:
+            _c = MongoClient(self.mongo_uri, serverSelectionTimeoutMS=2000)
+            _c.admin.command("ping")
+            _c.close()
+        except Exception:
+            raise unittest.SkipTest("MongoDB not available — skipping data layer tests")
+
         self.data_layer = MongoDBDataLayer(mongo_uri=self.mongo_uri)
         self.test_user_id = str(uuid.uuid4())
         self.test_username = f"test-user-{uuid.uuid4().hex[:8]}"

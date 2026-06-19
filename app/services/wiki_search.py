@@ -2,7 +2,7 @@ import os
 import re
 import json
 import logging
-from typing import Dict, List, Tuple
+from typing import Dict, List, Optional, Tuple
 
 from rank_bm25 import BM25Okapi
 from qdrant_client import QdrantClient
@@ -15,9 +15,25 @@ logger = logging.getLogger(__name__)
 _CACHE_KEY = "wiki:cache"
 _CACHE_TTL = 3600  # 1 hour
 
+# Module-level singletons — built once, reused across all queries
+_qdrant_client: Optional[QdrantClient] = None
+_bm25_index: Optional[BM25Okapi] = None
+_bm25_paths: List[str] = []
+_bm25_docs_key: Optional[str] = None  # tracks which docs the index was built from
+
 
 def _tokenize(text: str) -> List[str]:
     return re.findall(r"\w+", text.lower())
+
+
+def _get_qdrant_client() -> Optional[QdrantClient]:
+    global _qdrant_client
+    if _qdrant_client is None:
+        url = os.getenv("QDRANT_URL")
+        key = os.getenv("QDRANT_API_KEY")
+        if url and key:
+            _qdrant_client = QdrantClient(url=url, api_key=key)
+    return _qdrant_client
 
 
 class WikiSearchService:
@@ -58,19 +74,23 @@ class WikiSearchService:
     # ── Ranking strategies ────────────────────────────────────────────────
 
     def _bm25_rank(self, docs: Dict[str, str], query: str) -> List[str]:
-        paths = list(docs.keys())
-        corpus = [_tokenize(text) for text in docs.values()]
-        scores = BM25Okapi(corpus).get_scores(_tokenize(query))
-        ranked = sorted(zip(paths, scores), key=lambda x: x[1], reverse=True)
+        global _bm25_index, _bm25_paths, _bm25_docs_key
+        # Cache key = frozenset of paths; rebuild only when docs change
+        current_key = str(sorted(docs.keys()))
+        if _bm25_index is None or _bm25_docs_key != current_key:
+            _bm25_paths = list(docs.keys())
+            corpus = [_tokenize(text) for text in docs.values()]
+            _bm25_index = BM25Okapi(corpus)
+            _bm25_docs_key = current_key
+        scores = _bm25_index.get_scores(_tokenize(query))
+        ranked = sorted(zip(_bm25_paths, scores), key=lambda x: x[1], reverse=True)
         return [p for p, s in ranked if s > 0]
 
     def _qdrant_rank(self, query: str) -> List[str]:
-        url = os.getenv("QDRANT_URL")
-        key = os.getenv("QDRANT_API_KEY")
-        if not url or not key:
+        client = _get_qdrant_client()
+        if not client:
             return []
         try:
-            client = QdrantClient(url=url, api_key=key)
             vec = get_embedding_service().embed_text(query)
             res = client.query_points(collection_name="wiki_pages", query=vec, limit=10)
             return [
@@ -110,7 +130,7 @@ class WikiSearchService:
             parts = content.split("---", 2)
             if len(parts) >= 3:
                 body = parts[2].strip()
-        return body[:250].strip() + ("..." if len(body) > 250 else "")
+        return body[:2000].strip() + ("..." if len(body) > 2000 else "")
 
     # ── Public API ────────────────────────────────────────────────────────
 
@@ -133,10 +153,18 @@ class WikiSearchService:
             if not orig:
                 continue
             results.append(
-                f"Result {rank + 1}:\n"
-                f"Path: {orig}\n"
-                f"Relevance Score (RRF): {score:.4f}\n"
-                f"Snippet:\n{self._snippet(docs[orig], query)}\n"
-                "---"
+                f"[{rank + 1}] {os.path.basename(orig)}\n"
+                f"{self._snippet(docs[orig], query)}"
             )
         return "\n\n".join(results) if results else "No matches found."
+
+
+def invalidate_wiki_cache() -> None:
+    """Call after ingestion to force BM25 index rebuild on next query."""
+    global _bm25_index, _bm25_docs_key
+    _bm25_index = None
+    _bm25_docs_key = None
+    try:
+        get_redis_client().delete(_CACHE_KEY)
+    except Exception:
+        pass
