@@ -236,7 +236,7 @@ def test_single_turn(golden: Golden):
         input=golden.input,
         actual_output=actual_output,
         expected_output=golden.expected_output,
-        retrieval_context=retrieval_context or None,
+        retrieval_context=retrieval_context if retrieval_context else [],
     )
 
     # Bắt đầu với PROD metrics (luôn chạy)

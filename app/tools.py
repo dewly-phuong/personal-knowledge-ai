@@ -108,7 +108,27 @@ def entity_search(entity_name: str, query: str) -> str:
     canonical = entity_name
     if not subg_1hop or not subg_1hop["nodes"]:
         all_nodes = list(store.graph.nodes)
-        matches = [n for n in all_nodes if n.lower().strip() == entity_name.lower().strip()]
+        entity_lower = entity_name.lower().strip()
+
+        # 1) exact case-insensitive
+        matches = [n for n in all_nodes if n.lower().strip() == entity_lower]
+
+        # 2) keyword overlap (≥50% of query words hit the node name)
+        if not matches:
+            entity_words = set(entity_lower.split())
+            matches = [
+                n for n in all_nodes
+                if entity_words and
+                len(entity_words & set(n.lower().split())) / len(entity_words) >= 0.5
+            ]
+
+        # 3) difflib fuzzy (cutoff 0.55 — loose enough for VN paraphrases)
+        if not matches:
+            from difflib import get_close_matches
+            lower_map = {n.lower(): n for n in all_nodes}
+            close = get_close_matches(entity_lower, list(lower_map), n=3, cutoff=0.55)
+            matches = [lower_map[c] for c in close]
+
         if matches:
             canonical = matches[0]
             subg_1hop = store.get_subgraph(canonical, hops=1)

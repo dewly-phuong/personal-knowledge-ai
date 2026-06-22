@@ -2,9 +2,11 @@ import json
 from typing import AsyncGenerator
 
 from langchain_core.messages import HumanMessage
+from langfuse.langchain import CallbackHandler
 
 from app.agent import create_conversational_agent
 from app.memory.history_manager import HistoryManager
+from app.prompt_store import get_active_prompt
 from app.services.cost_tracker import CostTracker
 
 _cost_tracker = CostTracker()
@@ -20,7 +22,8 @@ async def chat_generator(
     chart payloads, and the final done event to the Chainlit frontend.
     """
     chat_history = await history_manager.get_context(session_id)
-    agent = create_conversational_agent(temperature=1.0)
+    active_prompt = await get_active_prompt()
+    agent = create_conversational_agent(temperature=1.0, system_prompt=active_prompt)
     input_messages = list(chat_history) + [HumanMessage(content=query)]
 
     total_input = 0
@@ -28,9 +31,12 @@ async def chat_generator(
     output = ""
     new_messages = []
 
+    langfuse_handler = CallbackHandler(trace_context={"session_id": session_id})
     try:
         async for event in agent.astream_events(
-            {"messages": input_messages}, version="v2"
+            {"messages": input_messages},
+            version="v2",
+            config={"callbacks": [langfuse_handler]},
         ):
             kind = event.get("event")
 
