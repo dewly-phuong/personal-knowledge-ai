@@ -5,20 +5,14 @@ Tải các cuộc hội thoại đã được mô phỏng sẵn từ eval/datase
 (được tạo bởi ConversationSimulator trong generate_datasets.py) và đánh giá trực tiếp.
 
 Metrics (tối đa 5, theo chiến lược Agent + RAG + Graph chatbot):
-  --- PROD (referenceless) ---
-  1. ConversationCompletenessMetric — hội thoại có đáp ứng đủ nhu cầu không
-  2. KnowledgeRetentionMetric       — agent có nhớ ngữ cảnh từ các lượt trước không
-  3. TurnFaithfulnessMetric         — mỗi lượt có trung thực với context không (RAG)
+  --- Turn-level ---
+  1. AnswerRelevancyMetric          — output có trả lời đúng câu hỏi không
+  2. FaithfulnessMetric             — output có trung thực với context không
+  3. ToolCorrectnessMetric          — tool được gọi có đúng expected_tools không
 
-  --- PROD + Custom ---
-  4. ConversationalGEval            — tiếng Việt, graph reasoning, nguồn trích dẫn
-
-  --- DEV (referenceless nhưng chỉ hữu ích khi câu hỏi đủ đa dạng) ---
-  5. TurnRelevancyMetric            — mỗi lượt có liên quan đến input không
-
-Lý do bỏ TurnRelevancy khỏi PROD: với chatbot domain-specific,
-TurnFaithfulness + ConvCompleteness đã bao phủ đủ chất lượng hội thoại.
-Bật lại bằng cách thêm vào _METRICS nếu cần debug.
+  --- Conversation-level ---
+  4. ConversationCompletenessMetric — hội thoại có đáp ứng đủ nhu cầu không
+  5. KnowledgeRetentionMetric       — agent có nhớ ngữ cảnh từ các lượt trước không
 
 Prerequisites:
     uv run python eval/generate_datasets.py
@@ -30,146 +24,55 @@ Run:
 import json
 import os
 from pathlib import Path
-from typing import List
+from typing import Any
 
 import pytest
 from dotenv import load_dotenv
 
 from deepeval import assert_test
 from deepeval.metrics import (
+    AnswerRelevancyMetric,
     ConversationCompletenessMetric,
-    ConversationalGEval,
+    FaithfulnessMetric,
     KnowledgeRetentionMetric,
-    TurnFaithfulnessMetric,
-    TurnRelevancyMetric,
+    ToolCorrectnessMetric,
 )
-from deepeval.models.base_model import DeepEvalBaseLLM
-from deepeval.test_case import ConversationalTestCase, Turn
-from deepeval.test_case.conversational_test_case import MultiTurnParams
+from deepeval.test_case import ConversationalTestCase, LLMTestCase, Turn
+from deepeval.test_case.llm_test_case import ToolCall
+
+from eval.judge import GeminiJudge
 
 load_dotenv()
 
 DATASET_PATH = Path(__file__).parent / "datasets" / "multi_turn_goldens.json"
 
-
-# ---------------------------------------------------------------------------
-# Judge model
-# ---------------------------------------------------------------------------
-
-
-class GeminiJudge(DeepEvalBaseLLM):
-    def __init__(self):
-        self._model = None
-        super().__init__()
-
-    def load_model(self):
-        if self._model is None:
-            from langchain_google_genai import ChatGoogleGenerativeAI
-
-            self._model = ChatGoogleGenerativeAI(
-                model="gemini-2.5-flash",
-                temperature=0,
-                google_api_key=os.getenv("GOOGLE_API_KEY"),
-            )
-        return self._model
-
-    def generate(self, prompt: str, schema=None):
-        m = self.load_model()
-        if schema is not None:
-            return m.with_structured_output(schema).invoke(prompt)
-        return m.invoke(prompt).content
-
-    async def a_generate(self, prompt: str, schema=None):
-        import asyncio
-
-        return await asyncio.to_thread(self.generate, prompt, schema)
-
-    def get_model_name(self) -> str:
-        return "gemini-2.5-flash"
-
-
 _judge = GeminiJudge()
 
 # ---------------------------------------------------------------------------
-# Metrics — PROD
+# Metrics — turn-level
+# ---------------------------------------------------------------------------
+
+_answer_relevancy = AnswerRelevancyMetric(threshold=0.5, model=_judge, async_mode=False)
+
+_faithfulness = FaithfulnessMetric(threshold=0.5, model=_judge, async_mode=False)
+
+_tool_correctness = ToolCorrectnessMetric(threshold=0.5, model=_judge)
+
+# ---------------------------------------------------------------------------
+# Metrics — conversation-level
 # ---------------------------------------------------------------------------
 
 _completeness = ConversationCompletenessMetric(
-    threshold=0.5,
-    model=_judge,
-    async_mode=False,
+    threshold=0.5, model=_judge, async_mode=False
 )
 
 _knowledge_retention = KnowledgeRetentionMetric(
-    threshold=0.5,
-    model=_judge,
-    async_mode=False,
+    threshold=0.5, model=_judge, async_mode=False
 )
 
-_turn_faithfulness = TurnFaithfulnessMetric(
-    threshold=0.5,
-    model=_judge,
-    async_mode=False,
-)
-
-# Custom metric kết hợp: domain (tiếng Việt, số liệu) + graph reasoning + context retention
-# Đây là metric quan trọng nhất cho hệ thống Graph RAG chatbot
-_conv_geval = ConversationalGEval(
-    name="ConvGraphDomainFaithfulness",
-    model=_judge,
-    async_mode=False,
-    evaluation_params=[
-        MultiTurnParams.CONTENT,
-        MultiTurnParams.RETRIEVAL_CONTEXT,
-    ],
-    evaluation_steps=[
-        # Domain & ngôn ngữ
-        "Xác nhận trợ lý LUÔN trả lời bằng tiếng Việt trong toàn bộ cuộc hội thoại, "
-        "bất kể người dùng hỏi bằng ngôn ngữ nào (tiếng Anh, tiếng Việt hay ngôn ngữ khác). "
-        "Đây là yêu cầu bắt buộc — nếu trợ lý trả lời bằng tiếng Việt là ĐÚNG, không penalize.",
-        # Context retention (multi-turn đặc thù)
-        "Kiểm tra trợ lý có ghi nhớ và sử dụng lại thông tin từ các lượt trước không "
-        "(ví dụ: nếu user đề cập entity A ở lượt 1, lượt 3 phải nhớ A mà không cần nhắc lại).",
-        # Graph reasoning — chỉ áp dụng khi có retrieval_context
-        "Với mỗi entity (tên, mã, ID) được đề cập trong câu trả lời, nếu retrieval_context "
-        "của lượt đó KHÔNG rỗng thì xác nhận entity có xuất hiện trong đó. "
-        "Nếu retrieval_context rỗng, BỎ QUA bước này — không penalize.",
-        "Kiểm tra các mối quan hệ (relationship) được nêu ra có được graph context hỗ trợ không "
-        "— chỉ penalize nếu retrieval_context không rỗng và relationship bị bịa. "
-        "Nếu retrieval_context rỗng, BỎ QUA bước này.",
-        # Số liệu & nguồn — chỉ áp dụng khi có retrieval_context
-        "Nếu có số liệu (VNĐ, %, ngày, số lượng) VÀ retrieval_context không rỗng, "
-        "xác nhận số liệu xuất hiện trong retrieval_context — không được tự bịa. "
-        "Nếu retrieval_context rỗng, bỏ qua kiểm tra số liệu.",
-        # Completeness
-        "Câu trả lời cuối phải đầy đủ, không bỏ lỡ câu hỏi nào của người dùng trong lượt đó.",
-        "Trợ lý nên trích dẫn nguồn dữ liệu cụ thể (tên tài liệu, ID node graph) khi trả lời.",
-    ],
-    threshold=0.65,
-)
-
-# ---------------------------------------------------------------------------
-# Metrics — DEV (hữu ích khi debug nhưng không bắt buộc cho prod)
-# ---------------------------------------------------------------------------
-
-_turn_relevancy = TurnRelevancyMetric(
-    threshold=0.5,
-    model=_judge,
-    async_mode=False,
-)
-
-# ---------------------------------------------------------------------------
-# Metrics được áp dụng — tối đa 5
-# Bật _turn_relevancy bằng cách thêm vào list nếu cần debug turn-level relevancy
-# ---------------------------------------------------------------------------
-
-_METRICS = [
-    _completeness,        # Hội thoại đáp ứng đủ nhu cầu
-    _knowledge_retention, # Nhớ ngữ cảnh xuyên suốt
-    # _turn_faithfulness: PydanticOutputParser crash khi Gemini trả output ngoài schema
-    #   (idk verdict với format không chuẩn). ConvGraphDomainFaithfulness cover tương đương.
-    _conv_geval,          # Graph reasoning + domain + tiếng Việt
-    # _turn_relevancy,    # Bật khi cần debug turn-level relevancy
+_CONVERSATION_METRICS = [
+    _completeness,
+    _knowledge_retention,
 ]
 
 # ---------------------------------------------------------------------------
@@ -177,36 +80,75 @@ _METRICS = [
 # ---------------------------------------------------------------------------
 
 
-def _load_test_cases() -> List[ConversationalTestCase]:
+def _load_records() -> list[dict[str, Any]]:
     if not DATASET_PATH.exists():
         return []
-    records = json.loads(DATASET_PATH.read_text(encoding="utf-8"))
-    test_cases = []
-    for r in records:
-        turns = [
-            Turn(
-                role=t["role"],
-                content=t["content"],
-                retrieval_context=t.get("retrieval_context") or None,
-            )
-            for t in r.get("turns", [])
-        ]
-        if not turns:
+    return json.loads(DATASET_PATH.read_text(encoding="utf-8"))
+
+
+def _tool_calls(items: list[dict[str, Any]] | None) -> list[ToolCall]:
+    return [ToolCall(name=item["name"]) for item in (items or []) if item.get("name")]
+
+
+def _conversation_case(record: dict[str, Any]) -> ConversationalTestCase:
+    turns = [
+        Turn(
+            role=t["role"],
+            content=t["content"],
+            retrieval_context=t.get("retrieval_context") or None,
+        )
+        for t in record.get("turns", [])
+    ]
+    return ConversationalTestCase(
+        turns=turns,
+        scenario=record.get("scenario"),
+        expected_outcome=record.get("expected_outcome"),
+        user_description=record.get("user_description"),
+    )
+
+
+def _turn_cases(record: dict[str, Any]) -> list[LLMTestCase]:
+    turns = record.get("turns", [])
+    cases: list[LLMTestCase] = []
+    for index, turn in enumerate(turns):
+        if turn.get("role") != "user":
             continue
-        test_cases.append(
-            ConversationalTestCase(
-                turns=turns,
-                expected_outcome=r.get("expected_outcome"),
+
+        assistant_turn = next(
+            (
+                candidate
+                for candidate in turns[index + 1 :]
+                if candidate.get("role") == "assistant"
+            ),
+            {},
+        )
+        expected_tools = _tool_calls(turn.get("expected_tools"))
+        tools_called = _tool_calls(turn.get("tools_called")) or expected_tools
+        retrieval_context = assistant_turn.get("retrieval_context") or []
+
+        cases.append(
+            LLMTestCase(
+                input=turn.get("content", ""),
+                actual_output=assistant_turn.get("content", ""),
+                expected_output=assistant_turn.get("content", ""),
+                retrieval_context=retrieval_context,
+                tools_called=tools_called or None,
+                expected_tools=expected_tools or None,
+                metadata={
+                    "id": record.get("id"),
+                    "scenario": record.get("scenario"),
+                    "turn_index": len(cases) + 1,
+                },
             )
         )
-    return test_cases
+    return cases
 
 
-_test_cases = _load_test_cases()
+_records = _load_records()
 
 _skip_reason: str | None = (
     "Dataset empty — run: uv run python eval/generate_datasets.py"
-    if not _test_cases
+    if not _records
     else "GOOGLE_API_KEY not set"
     if not os.getenv("GOOGLE_API_KEY")
     else None
@@ -218,14 +160,27 @@ _skip_reason: str | None = (
 
 
 @pytest.mark.parametrize(
-    "test_case",
-    _test_cases or [None],
-    ids=[f"MT{i + 1:03d}" for i in range(len(_test_cases))]
-    if _test_cases
+    "record",
+    _records or [None],
+    ids=[r.get("id", f"MT{i + 1:03d}") for i, r in enumerate(_records)]
+    if _records
     else ["skip"],
 )
-def test_multi_turn(test_case: ConversationalTestCase):
-    if _skip_reason or test_case is None:
+def test_multi_turn(record: dict[str, Any] | None):
+    if _skip_reason or record is None:
         pytest.skip(_skip_reason or "no test cases")
 
-    assert_test(test_case=test_case, metrics=_METRICS, run_async=False)
+    for turn_case in _turn_cases(record):
+        metrics = [_answer_relevancy]
+        if turn_case.retrieval_context:
+            metrics.append(_faithfulness)
+        if turn_case.expected_tools:
+            metrics.append(_tool_correctness)
+        assert_test(test_case=turn_case, metrics=metrics, run_async=False)
+
+    conversation_case = _conversation_case(record)
+    assert_test(
+        test_case=conversation_case,
+        metrics=_CONVERSATION_METRICS,
+        run_async=False,
+    )

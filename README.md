@@ -134,7 +134,7 @@ A daily background job automatically re-runs local ingestion and a wiki health a
 
 | Tool | When to use |
 |---|---|
-| `get_current_time` | Current date/time |
+| `uploaded_file_context` | Retrieve processed context from files uploaded in the current Chainlit chat |
 | `wiki_search` | Policy docs, procedures, compiled wiki pages (BM25 + Qdrant hybrid) |
 | `graph_traverse` | Service dependencies, ownership, pipeline flows (2-hop graph) |
 | `mongodb_query` | Exact company data — employees, payroll, KPIs, bugs, revenue… |
@@ -155,9 +155,35 @@ A daily background job automatically re-runs local ingestion and a wiki health a
 | `POST` | `/api/chat/{session_id}/sync` | Overwrite chat history (used on resume) |
 | `POST` | `/api/ingest` | Trigger background ingestion |
 | `GET` | `/api/ingest/{task_id}` | Poll ingestion task status |
+| `GET` | `/api/uploads` | List uploaded files retained as chat-session context |
+| `GET` | `/api/uploads/{upload_id}` | Inspect one uploaded file context artifact |
 | `GET` | `/api/graph/{entity}` | 2-hop subgraph for an entity (JSON) |
 | `GET` | `/api/cost` | Accumulated LLM cost stats (today + month) |
 | `GET` | `/api/health` | Redis + MongoDB connectivity check |
+
+---
+
+## Chainlit File Uploads
+
+Files uploaded in Chainlit are processed only for the active chat session:
+
+- CSV/XLSX/XLSM files are parsed with Pandas, summarized to Markdown, and exported to `csv/*.csv`.
+- Other files are converted to Markdown with MarkItDown when needed.
+- Processed files are stored under `uploads/sessions/{session_id}/{upload_id}`.
+- Metadata is saved in MongoDB collection `uploaded_artifacts`, including schema/sample rows, description, and processed paths.
+- The agent uses `uploaded_file_context` to answer questions from files in the active chat session.
+- Re-uploading the same file in one session reuses the existing processed artifact by SHA-256 hash instead of converting it again.
+- Uploaded files are searchable through `uploaded_file_context`; they are not ingested into the permanent wiki, graph, vector store, or MongoDB knowledge collections.
+
+Debug flow:
+
+```bash
+# List uploaded session artifacts
+curl http://localhost:8000/api/uploads
+
+# Inspect one upload
+curl http://localhost:8000/api/uploads/{upload_id}
+```
 
 ---
 

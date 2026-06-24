@@ -8,7 +8,6 @@ from app.memory.summary_buffer import compress_history, _to_turns
 from app.memory.history_manager import HistoryManager
 
 
-# Helper for running async test methods
 def async_test(coro):
     def wrapper(*args, **kwargs):
         return asyncio.run(coro(*args, **kwargs))
@@ -16,9 +15,7 @@ def async_test(coro):
     return wrapper
 
 
-class _FakeRedis:
-    """In-memory Redis stub — lets session tests run without a live Redis server."""
-
+class FakeRedis:
     def __init__(self):
         self._store = {}
 
@@ -40,14 +37,12 @@ class TestMemorySystem(unittest.TestCase):
         load_dotenv()
         self.session_id = "test-session-12345"
         self.mongo_uri = os.getenv("MONGO_URI", "mongodb://localhost:27017/")
-        self.store = SessionStore(redis_client=_FakeRedis(), mongo_uri=self.mongo_uri)
+        self.store = SessionStore(redis_client=FakeRedis(), mongo_uri=self.mongo_uri)
         self.manager = HistoryManager(store=self.store)
 
     def tearDown(self):
-        # Reset the mongo client to avoid event loop binding issues across loops
         self.store._mongo_client = None
 
-        # Clean up test session and flush background tasks
         async def cleanup():
             await self.store.clear(self.session_id)
             await self.store.flush()
@@ -71,15 +66,10 @@ class TestMemorySystem(unittest.TestCase):
 
     @async_test
     async def test_session_store_save_and_load(self):
-        messages = [
-            HumanMessage(content="Ping"),
-            AIMessage(content="Pong"),
-        ]
-        # Save messages
+        messages = [HumanMessage(content="Ping"), AIMessage(content="Pong")]
         await self.store.save(self.session_id, messages)
         await self.store.flush()
 
-        # Load and verify
         loaded = await self.store.load(self.session_id)
         self.assertEqual(len(loaded), 2)
         self.assertEqual(loaded[0].content, "Ping")
@@ -91,21 +81,17 @@ class TestMemorySystem(unittest.TestCase):
         await self.store.save(self.session_id, messages)
         await self.store.flush()
 
-        # Verify saved
         loaded = await self.store.load(self.session_id)
         self.assertEqual(len(loaded), 1)
 
-        # Clear session
         await self.store.clear(self.session_id)
         await self.store.flush()
 
-        # Verify cleared
         loaded = await self.store.load(self.session_id)
         self.assertEqual(loaded, [])
 
     @async_test
     async def test_compress_history_under_limit(self):
-        # 2 turns is under 3 turns limit
         messages = [
             HumanMessage(content="T1"),
             AIMessage(content="R1"),
@@ -118,7 +104,6 @@ class TestMemorySystem(unittest.TestCase):
 
     @async_test
     async def test_compress_history_over_limit(self):
-        # 4 turns exceeds 3 turns limit
         messages = [
             HumanMessage(content="Hỏi về service A"),
             AIMessage(content="Service A có owner là team platform"),
@@ -130,15 +115,12 @@ class TestMemorySystem(unittest.TestCase):
             AIMessage(content="Service D có owner là team ops"),
         ]
 
-        # We perform compression. It should use Gemini Flash to summarize the first turn.
-        # Since this calls real Gemini API, we wrap it in a try-except in case GOOGLE_API_KEY is missing/invalid.
         google_key = os.getenv("GOOGLE_API_KEY")
         if not google_key:
             self.skipTest("GOOGLE_API_KEY not found in .env")
 
         try:
             compressed = await compress_history(messages, max_recent=3)
-            # Should have: 1 SystemMessage (summary) + 6 messages (3 recent turns) = 7 messages total
             self.assertEqual(len(compressed), 7)
             self.assertTrue(isinstance(compressed[0], SystemMessage))
             self.assertTrue("[Tóm tắt hội thoại trước]" in compressed[0].content)
@@ -149,11 +131,9 @@ class TestMemorySystem(unittest.TestCase):
 
     @async_test
     async def test_history_manager_flow(self):
-        # Test full flow via manager
         await self.manager.append_turn(self.session_id, "User Q1", "Agent A1")
         await self.store.flush()
 
-        # Load context
         context = await self.manager.get_context(self.session_id)
         self.assertEqual(len(context), 2)
         self.assertEqual(context[0].content, "User Q1")
@@ -161,7 +141,6 @@ class TestMemorySystem(unittest.TestCase):
 
     @async_test
     async def test_history_manager_with_tools(self):
-        # append_turn now accepts new_messages: List[AnyMessage] directly (no AgentAction)
         from langchain_core.messages import AIMessage, ToolMessage
 
         new_messages = [

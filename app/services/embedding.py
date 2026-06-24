@@ -1,4 +1,5 @@
 import os
+import threading
 import torch
 from typing import List, Protocol
 
@@ -20,6 +21,10 @@ try:
 except ImportError:
     genai = None
     types = None
+
+
+_SERVICE_CACHE: dict[tuple[str, str | None], "EmbeddingService"] = {}
+_SERVICE_LOCK = threading.Lock()
 
 
 class EmbeddingService(Protocol):
@@ -140,12 +145,29 @@ class GeminiEmbeddingService:
 
 def get_embedding_service(api_key: str = None) -> EmbeddingService:
     """
-    Factory function to instantiate the embedding service.
+    Factory function to instantiate and cache the embedding service.
     First tries to use GeminiEmbeddingService. If missing key, initialization error,
     or connection error, falls back to ModernBERTEmbeddingService (local).
     """
-    # 1. Try Gemini
     gemini_key = api_key or os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY")
+    cache_key = ("gemini", gemini_key) if gemini_key else ("modernbert", None)
+    if service := _SERVICE_CACHE.get(cache_key):
+        return service
+
+    with _SERVICE_LOCK:
+        if service := _SERVICE_CACHE.get(cache_key):
+            return service
+        service = _create_embedding_service(gemini_key)
+        _SERVICE_CACHE[cache_key] = service
+        return service
+
+
+def clear_embedding_service_cache() -> None:
+    with _SERVICE_LOCK:
+        _SERVICE_CACHE.clear()
+
+
+def _create_embedding_service(gemini_key: str | None) -> EmbeddingService:
     if gemini_key:
         try:
             print("Attempting to initialize Gemini Embedding service...")
@@ -163,7 +185,6 @@ def get_embedding_service(api_key: str = None) -> EmbeddingService:
             "GOOGLE_API_KEY/GEMINI_API_KEY not found in environment. Falling back to local model."
         )
 
-    # 2. Fall back to local ModernBERT
     try:
         print("Initializing local ModernBERT Embedding service...")
         return ModernBERTEmbeddingService()

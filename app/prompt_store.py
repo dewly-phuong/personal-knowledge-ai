@@ -25,14 +25,16 @@ async def save_prompt(content: str, label: str = "", note: str = "") -> int:
     version = (last["version"] + 1) if last else 1
 
     await col.update_many({"is_active": True}, {"$set": {"is_active": False}})
-    await col.insert_one({
-        "version": version,
-        "content": content,
-        "label": label,
-        "note": note,
-        "is_active": True,
-        "created_at": datetime.now(timezone.utc),
-    })
+    await col.insert_one(
+        {
+            "version": version,
+            "content": content,
+            "label": label,
+            "note": note,
+            "is_active": True,
+            "created_at": datetime.now(timezone.utc),
+        }
+    )
     return version
 
 

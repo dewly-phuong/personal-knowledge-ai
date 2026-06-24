@@ -14,9 +14,6 @@ Metrics (tối đa 5, theo chiến lược Agent + RAG + Graph):
   --- DEV ONLY (cần ground truth — chỉ chạy khi có expected_tools) ---
   5. ToolCorrectnessMetric   — tool được gọi có đúng không
 
-Không dùng ContextualRelevancyMetric vì đã được bao phủ bởi FaithfulnessMetric
-và GraphReasoningGEval, tránh vượt giới hạn 5 metrics.
-
 Prerequisites:
     uv run python eval/generate_datasets.py
 
@@ -38,49 +35,13 @@ from deepeval.metrics import (
     GEval,
     ToolCorrectnessMetric,
 )
-from deepeval.models.base_model import DeepEvalBaseLLM
 from deepeval.test_case import LLMTestCase, SingleTurnParams
+
+from eval.judge import GeminiJudge
 
 load_dotenv()
 
 DATASET_PATH = Path(__file__).parent / "datasets" / "single_turn_goldens.json"
-
-
-# ---------------------------------------------------------------------------
-# Judge model
-# ---------------------------------------------------------------------------
-
-
-class GeminiJudge(DeepEvalBaseLLM):
-    def __init__(self):
-        self._model = None
-        super().__init__()
-
-    def load_model(self):
-        if self._model is None:
-            from langchain_google_genai import ChatGoogleGenerativeAI
-
-            self._model = ChatGoogleGenerativeAI(
-                model="gemini-2.5-flash",
-                temperature=0,
-                google_api_key=os.getenv("GOOGLE_API_KEY"),
-            )
-        return self._model
-
-    def generate(self, prompt: str, schema=None):
-        m = self.load_model()
-        if schema is not None:
-            return m.with_structured_output(schema).invoke(prompt)
-        return m.invoke(prompt).content
-
-    async def a_generate(self, prompt: str, schema=None):
-        import asyncio
-
-        return await asyncio.to_thread(self.generate, prompt, schema)
-
-    def get_model_name(self) -> str:
-        return "gemini-2.5-flash"
-
 
 _judge = GeminiJudge()
 
@@ -88,20 +49,10 @@ _judge = GeminiJudge()
 # Metrics — PROD (referenceless, luôn chạy)
 # ---------------------------------------------------------------------------
 
-_answer_relevancy = AnswerRelevancyMetric(
-    threshold=0.5,
-    model=_judge,
-    async_mode=False,
-)
+_answer_relevancy = AnswerRelevancyMetric(threshold=0.5, model=_judge, async_mode=False)
 
-_faithfulness = FaithfulnessMetric(
-    threshold=0.5,
-    model=_judge,
-    async_mode=False,
-)
+_faithfulness = FaithfulnessMetric(threshold=0.5, model=_judge, async_mode=False)
 
-# Custom metric: đánh giá chất lượng suy luận từ Knowledge Graph
-# Kiểm tra entity, relationship, và tính logic của kết luận từ graph
 _graph_reasoning = GEval(
     name="GraphReasoningAccuracy",
     model=_judge,
@@ -124,7 +75,6 @@ _graph_reasoning = GEval(
     threshold=0.65,
 )
 
-# Custom metric: đảm bảo tính domain-specific — tiếng Việt, không bịa số liệu
 _domain_faithfulness = GEval(
     name="DomainFaithfulness",
     model=_judge,
@@ -146,26 +96,12 @@ _domain_faithfulness = GEval(
 )
 
 # ---------------------------------------------------------------------------
-# Metrics — DEV ONLY (cần ground truth từ golden)
+# Metrics — DEV ONLY
 # ---------------------------------------------------------------------------
 
-_tool_correctness = ToolCorrectnessMetric(
-    threshold=0.5,
-    model=_judge,
-)
+_tool_correctness = ToolCorrectnessMetric(threshold=0.5, model=_judge)
 
-# ---------------------------------------------------------------------------
-# PROD metrics luôn được áp dụng (không phụ thuộc ground truth)
-# DEV metrics thêm động dựa trên dữ liệu có sẵn trong golden
-# ---------------------------------------------------------------------------
-
-_PROD_METRICS = [
-    _answer_relevancy,
-    _graph_reasoning,
-    _domain_faithfulness,
-]
-# _faithfulness thêm động khi có retrieval_context (vẫn referenceless)
-# _tool_correctness thêm động khi có expected_tools (cần ground truth)
+_PROD_METRICS = [_answer_relevancy, _graph_reasoning, _domain_faithfulness]
 
 # ---------------------------------------------------------------------------
 # Dataset — loaded once at module import
@@ -206,7 +142,6 @@ def test_single_turn(golden: Golden):
 
     agent = create_conversational_agent()
 
-    # Invoke agent và thu thập output + retrieval_context từ ToolMessage
     result = agent.invoke(
         {"messages": [{"role": "user", "content": golden.input}]},
     )
@@ -239,14 +174,9 @@ def test_single_turn(golden: Golden):
         retrieval_context=retrieval_context if retrieval_context else [],
     )
 
-    # Bắt đầu với PROD metrics (luôn chạy)
     metrics = list(_PROD_METRICS)
-
-    # Thêm Faithfulness khi có retrieval_context (referenceless, OK cho prod)
     if retrieval_context:
         metrics.append(_faithfulness)
-
-    # Thêm ToolCorrectness chỉ khi golden có expected_tools (DEV only)
     if getattr(golden, "expected_tools", None) is not None:
         metrics.append(_tool_correctness)
 

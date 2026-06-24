@@ -8,6 +8,7 @@ Usage:
   python scripts/prompt_cli.py rollback --version 3
   python scripts/prompt_cli.py show --version 3
 """
+
 import argparse
 import os
 import sys
@@ -31,18 +32,21 @@ def _col():
 
 def cmd_seed(args):
     from app.agent import SYSTEM_PROMPT
+
     col = _col()
     if col.find_one({}):
         print("Prompts already exist. Use 'save' to add a new version.")
         sys.exit(1)
-    col.insert_one({
-        "version": 1,
-        "content": SYSTEM_PROMPT,
-        "label": args.label or "initial",
-        "note": "seeded from agent.py",
-        "is_active": True,
-        "created_at": datetime.now(timezone.utc),
-    })
+    col.insert_one(
+        {
+            "version": 1,
+            "content": SYSTEM_PROMPT,
+            "label": args.label or "initial",
+            "note": "seeded from agent.py",
+            "is_active": True,
+            "created_at": datetime.now(timezone.utc),
+        }
+    )
     print("Seeded v1 [ACTIVE]")
 
 
@@ -77,14 +81,16 @@ def cmd_save(args):
     last = col.find_one({}, sort=[("version", -1)])
     version = (last["version"] + 1) if last else 1
     col.update_many({"is_active": True}, {"$set": {"is_active": False}})
-    col.insert_one({
-        "version": version,
-        "content": content,
-        "label": args.label or "",
-        "note": args.note or "",
-        "is_active": True,
-        "created_at": datetime.now(timezone.utc),
-    })
+    col.insert_one(
+        {
+            "version": version,
+            "content": content,
+            "label": args.label or "",
+            "note": args.note or "",
+            "is_active": True,
+            "created_at": datetime.now(timezone.utc),
+        }
+    )
     print(f"Saved as v{version} [ACTIVE]")
 
 
@@ -101,7 +107,9 @@ def cmd_rollback(args):
 
 def cmd_show(args):
     col = _col()
-    doc = col.find_one({"version": args.version} if args.version else {"is_active": True})
+    doc = col.find_one(
+        {"version": args.version} if args.version else {"is_active": True}
+    )
     if not doc:
         print("Not found.")
         sys.exit(1)
@@ -130,7 +138,13 @@ def main():
     sh.add_argument("--version", type=int, default=None)
 
     args = p.parse_args()
-    {"seed": cmd_seed, "list": cmd_list, "save": cmd_save, "rollback": cmd_rollback, "show": cmd_show}[args.cmd](args)
+    {
+        "seed": cmd_seed,
+        "list": cmd_list,
+        "save": cmd_save,
+        "rollback": cmd_rollback,
+        "show": cmd_show,
+    }[args.cmd](args)
 
 
 if __name__ == "__main__":

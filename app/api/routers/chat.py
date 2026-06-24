@@ -35,7 +35,12 @@ def _to_langchain_messages(messages: List[Dict[str, str]]) -> List[BaseMessage]:
 async def chat_stream(body: ChatRequest, req: Request):
     """Streams chat tokens and intermediate tool execution steps from the agent."""
     return StreamingResponse(
-        chat_generator(body.query, body.session_id, req.app.state.history_manager),
+        chat_generator(
+            body.query,
+            body.session_id,
+            req.app.state.history_manager,
+            upload_ids=body.upload_ids,
+        ),
         media_type="text/event-stream",
     )
 

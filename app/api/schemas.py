@@ -1,10 +1,11 @@
 from typing import List, Dict
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class ChatRequest(BaseModel):
     query: str
     session_id: str
+    upload_ids: List[str] = Field(default_factory=list)
 
 
 class SyncHistoryRequest(BaseModel):

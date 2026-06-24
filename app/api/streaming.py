@@ -1,13 +1,15 @@
 import json
 from typing import AsyncGenerator
 
-from langchain_core.messages import HumanMessage
+from langchain_core.messages import HumanMessage, SystemMessage
 from langfuse.langchain import CallbackHandler
 
 from app.agent import create_conversational_agent
 from app.memory.history_manager import HistoryManager
 from app.prompt_store import get_active_prompt
 from app.services.cost_tracker import CostTracker
+from app.services.upload_artifacts import build_session_upload_context
+from app.tools import set_current_upload_session
 
 _cost_tracker = CostTracker()
 
@@ -16,6 +18,7 @@ async def chat_generator(
     query: str,
     session_id: str,
     history_manager: HistoryManager,
+    upload_ids: list[str] | None = None,
 ) -> AsyncGenerator[str, None]:
     """
     Async SSE generator — streams thinking tokens, tool steps, text tokens,
@@ -24,7 +27,11 @@ async def chat_generator(
     chat_history = await history_manager.get_context(session_id)
     active_prompt = await get_active_prompt()
     agent = create_conversational_agent(temperature=1.0, system_prompt=active_prompt)
-    input_messages = list(chat_history) + [HumanMessage(content=query)]
+    upload_context = build_session_upload_context(session_id, upload_ids=upload_ids)
+    upload_messages = [SystemMessage(content=upload_context)] if upload_context else []
+    input_messages = (
+        list(chat_history) + upload_messages + [HumanMessage(content=query)]
+    )
 
     total_input = 0
     total_output = 0
@@ -32,6 +39,7 @@ async def chat_generator(
     new_messages = []
 
     langfuse_handler = CallbackHandler(trace_context={"session_id": session_id})
+    session_token = set_current_upload_session(session_id)
     try:
         async for event in agent.astream_events(
             {"messages": input_messages},
@@ -113,6 +121,8 @@ async def chat_generator(
 
     except Exception as e:
         yield f"data: {json.dumps({'type': 'error', 'error': str(e)})}\n\n"
+    finally:
+        set_current_upload_session(None, token=session_token)
 
     cost = _cost_tracker.add(total_input, total_output)
     if output or new_messages:

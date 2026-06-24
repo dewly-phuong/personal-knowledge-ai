@@ -11,7 +11,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from chainlit.utils import mount_chainlit
 
 from app.api.lifespan import lifespan
-from app.api.routers import chat, ingest, graph, cost, health, elements
+from app.api.routers import chat, ingest, graph, cost, health, elements, uploads
 
 app = FastAPI(lifespan=lifespan)
 
@@ -29,5 +29,6 @@ app.include_router(graph.router)
 app.include_router(cost.router)
 app.include_router(health.router)
 app.include_router(elements.router)
+app.include_router(uploads.router)
 
 mount_chainlit(app=app, target="app.py", path="/chat")
