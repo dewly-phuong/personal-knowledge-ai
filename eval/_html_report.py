@@ -45,9 +45,11 @@ def build_html(
     multi: list[dict],
     generated_at: str,
     conversation: list[dict] | None = None,
+    parallel: list[dict] | None = None,
 ) -> str:
     conversation = conversation or []
-    all_records = single + multi + conversation
+    parallel = parallel or []
+    all_records = single + multi + conversation + parallel
     n_tests = len(all_records)
     n_passed = sum(1 for record in all_records if record["passed"])
     overall = n_passed / n_tests if n_tests else 0
@@ -62,7 +64,9 @@ def build_html(
     <div class="card"><div class="card-val">{len(single)}</div><div class="card-lbl">Single-turn</div></div>
     <div class="card"><div class="card-val">{len(multi)}</div><div class="card-lbl">Multi-turn</div></div>
     <div class="card"><div class="card-val">{len(conversation)}</div><div class="card-lbl">Unified conversation</div></div>
+    <div class="card"><div class="card-val">{len(parallel)}</div><div class="card-lbl">Parallel function calling</div></div>
   </div>{section_html(single, "Single-turn")}{section_html(multi, "Multi-turn")}{section_html(conversation, "Unified conversation")}
+  {section_html(parallel, "Parallel function calling")}
 </div></body></html>"""
 
 

@@ -25,6 +25,7 @@ from datetime import datetime, timezone
 
 from litellm import uuid
 
+from eval.diagnostic_report import diagnostic_summary, parse_traces_file
 from eval._report_builders import aggregate, avg, build_html, build_markdown
 
 
@@ -79,7 +80,7 @@ def parse_scores_file(path: pathlib.Path, run_id: str = "latest") -> dict[str, l
         if line.strip()
     ]
     if not rows:
-        return {"single": [], "multi": [], "conversation": []}
+        return {"single": [], "multi": [], "conversation": [], "parallel": []}
 
     if run_id == "latest":
         selected_run_id = rows[-1]["run_id"]
@@ -87,7 +88,12 @@ def parse_scores_file(path: pathlib.Path, run_id: str = "latest") -> dict[str, l
     elif run_id != "all":
         rows = [row for row in rows if row.get("run_id") == run_id]
 
-    grouped: dict[str, list[dict]] = {"single": [], "multi": [], "conversation": []}
+    grouped: dict[str, list[dict]] = {
+        "single": [],
+        "multi": [],
+        "conversation": [],
+        "parallel": [],
+    }
     for row in rows:
         label = _label_from_pytest_file(row.get("file", ""))
         if label not in grouped:
@@ -132,6 +138,8 @@ def _label_from_pytest_file(file_name: str) -> str | None:
         return "multi"
     if file_name == "test_conversation_dataset":
         return "conversation"
+    if file_name == "test_parallel_function_calling":
+        return "parallel"
     return None
 
 
@@ -144,17 +152,29 @@ def main():
     ap.add_argument("--multi", help="Đường dẫn multi_turn_results.json")
     ap.add_argument("--conversation", help="Đường dẫn conversation_results.json")
     ap.add_argument("--scores", help="Đường dẫn scores.jsonl từ pytest/conftest")
+    ap.add_argument("--traces", help="Đường dẫn traces.jsonl từ pytest/conftest")
     ap.add_argument(
         "--scores-run-id",
         default="latest",
         help="run_id trong scores.jsonl: latest, all, hoặc id cụ thể",
     )
     ap.add_argument(
+        "--traces-run-id",
+        default="latest",
+        help="run_id trong traces.jsonl: latest, all, hoặc id cụ thể",
+    )
+    ap.add_argument(
         "--out", default="eval/reports", help="Thư mục output (default: reports)"
     )
     args = ap.parse_args()
 
-    if not args.single and not args.multi and not args.conversation and not args.scores:
+    if (
+        not args.single
+        and not args.multi
+        and not args.conversation
+        and not args.scores
+        and not args.traces
+    ):
         ap.print_help()
         sys.exit(1)
 
@@ -174,6 +194,15 @@ def main():
         single.extend(scores["single"])
         multi.extend(scores["multi"])
         conversation.extend(scores["conversation"])
+        parallel = scores["parallel"]
+    else:
+        parallel = []
+
+    traces = (
+        parse_traces_file(pathlib.Path(args.traces), args.traces_run_id)
+        if args.traces
+        else []
+    )
 
     now = datetime.now(timezone.utc).strftime("%d/%m/%Y %H:%M UTC")
     rid = uuid.uuid4().hex[:8]
@@ -184,21 +213,35 @@ def main():
             ("single-turn", single),
             ("multi-turn", multi),
             ("conversation", conversation),
+            ("parallel-function-calling", parallel),
         ]
         if records
     ]
     subname = "" if len(labels) != 1 else f"-{labels[0]}"
 
+    diagnostics = diagnostic_summary(traces) if traces else {}
+
     md_path = out / f"report{subname}-{rid}.md"
     html_path = out / f"report{subname}-{rid}.html"
 
     md_path.write_text(
-        build_markdown(single, multi, now, conversation), encoding="utf-8"
+        build_markdown(
+            single,
+            multi,
+            now,
+            conversation,
+            parallel=parallel,
+            diagnostics=diagnostics,
+        ),
+        encoding="utf-8",
     )
-    html_path.write_text(build_html(single, multi, now, conversation), encoding="utf-8")
+    html_path.write_text(
+        build_html(single, multi, now, conversation, parallel=parallel),
+        encoding="utf-8",
+    )
 
     # ── Terminal summary ─────────────────────────────────────────────────────
-    all_records = single + multi + conversation
+    all_records = single + multi + conversation + parallel
     n_tests = len(all_records)
     n_passed = sum(1 for r in all_records if r["passed"])
     stats = aggregate(all_records)
@@ -216,10 +259,27 @@ def main():
         rate = s["passed"] / s["total"]
         flag = "" if rate >= 0.80 else "  ← xem lại"
         print(f"  {name:<34} {a:>5.2f}  {s['passed']}/{s['total']} ({rate:.0%}){flag}")
+    if traces:
+        print(f"{'─' * 56}")
+        print("  DIAGNOSTIC SUMMARY")
+        print(f"{'─' * 56}")
+        _print_counter("Failure modes", diagnostics["failure_modes"])
+        _print_counter("Improvement targets", diagnostics["targets"])
     print(f"{'=' * 56}")
     print(f"  Markdown : {md_path}")
     print(f"  HTML     : {html_path}")
     print(f"{'=' * 56}\n")
+
+
+def _print_counter(title: str, values: dict[str, int]) -> None:
+    if not values:
+        print(f"  {title:<20}: none")
+        return
+    rendered = ", ".join(
+        f"{name}={count}"
+        for name, count in sorted(values.items(), key=lambda item: (-item[1], item[0]))
+    )
+    print(f"  {title:<20}: {rendered}")
 
 
 if __name__ == "__main__":

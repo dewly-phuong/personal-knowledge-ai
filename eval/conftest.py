@@ -28,6 +28,8 @@ from typing import Any
 
 import pytest
 
+from eval.failure_modes import classify_failure_modes
+
 # ---------------------------------------------------------------------------
 # Cấu hình
 # ---------------------------------------------------------------------------
@@ -35,6 +37,7 @@ import pytest
 RESULT_DIR = pathlib.Path(__file__).parent / "result"
 RESULT_DIR.mkdir(exist_ok=True)
 SCORES_FILE = RESULT_DIR / "scores.jsonl"
+TRACES_FILE = RESULT_DIR / "traces.jsonl"
 
 # run_id duy nhất cho toàn bộ session pytest này
 RUN_ID = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -126,6 +129,35 @@ def pytest_runtest_call(item):
 # ---------------------------------------------------------------------------
 
 
+def _build_trace_entry(score_entry: dict, trace_payload: dict) -> dict:
+    entry = {
+        "run_id": score_entry.get("run_id", RUN_ID),
+        "test_id": score_entry.get("test_id", ""),
+        "file": score_entry.get("file", ""),
+        "suite": trace_payload.get("suite") or score_entry.get("file", ""),
+        "category": trace_payload.get("category"),
+        "question": trace_payload.get("question") or score_entry.get("input"),
+        "passed": bool(score_entry.get("passed")),
+        "duration": float(score_entry.get("duration") or 0),
+        "expected": trace_payload.get("expected") or {},
+        "actual": trace_payload.get("actual") or {},
+        "metrics": list(score_entry.get("metrics") or []),
+        "summary": score_entry.get("summary") or trace_payload.get("summary") or {},
+        "usage": trace_payload.get("usage") or {},
+    }
+    entry["failure_modes"] = classify_failure_modes(entry)
+    entry["diagnosis"] = [item["detail"] for item in entry["failure_modes"]]
+    return entry
+
+
+def _write_trace_entry(entry: dict) -> None:
+    try:
+        with open(TRACES_FILE, "a", encoding="utf-8") as f:
+            f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+    except Exception as exc:
+        print(f"WARNING: could not write diagnostic trace: {exc}")
+
+
 def pytest_runtest_logreport(report):
     """Ghi kết quả metric sau mỗi test vào scores.jsonl."""
     if report.when != "call":
@@ -146,6 +178,8 @@ def pytest_runtest_logreport(report):
         "metrics": list(_metric_results_by_nodeid.pop(nodeid, [])),
     }
 
+    diagnostic_trace = None
+
     # Fallback cho các version Deepeval/pytest có gắn metric vào user_properties.
     for key, val in getattr(report, "user_properties", []):
         if key == "deepeval_results":
@@ -160,6 +194,8 @@ def pytest_runtest_logreport(report):
                         "error": str(getattr(r, "error", "") or ""),
                     }
                 )
+        elif key == "diagnostic_trace":
+            diagnostic_trace = val
         elif key == "conversation_eval_summary":
             entry["summary"] = val
             if val.get("turn_average_score") is not None:
@@ -237,6 +273,12 @@ def pytest_runtest_logreport(report):
     # Ghi ngay vào file (append) — không mất dữ liệu nếu session crash giữa chừng
     with open(SCORES_FILE, "a", encoding="utf-8") as f:
         f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+
+    if diagnostic_trace:
+        try:
+            _write_trace_entry(_build_trace_entry(entry, diagnostic_trace))
+        except Exception as exc:
+            print(f"WARNING: could not build diagnostic trace: {exc}")
 
 
 # ---------------------------------------------------------------------------

@@ -59,11 +59,14 @@ def build_markdown(
     multi: list[dict],
     generated_at: str,
     conversation: list[dict] | None = None,
+    parallel: list[dict] | None = None,
+    diagnostics: dict | None = None,
 ) -> str:
     sections = [
         (single, "Single-turn"),
         (multi, "Multi-turn"),
         (conversation or [], "Unified conversation"),
+        (parallel or [], "Parallel function calling"),
     ]
     all_records = [record for records, _ in sections for record in records]
     n_tests = len(all_records)
@@ -77,6 +80,8 @@ def build_markdown(
         f"**Tổng tests:** {n_passed}/{n_tests} passed ({overall:.0%})  ",
         "",
     ]
+    if diagnostics:
+        lines.extend(_diagnostic_lines(diagnostics))
 
     for records, title in sections:
         if not records:
@@ -154,12 +159,36 @@ def build_markdown(
     return "\n".join(lines)
 
 
+def _diagnostic_lines(diagnostics: dict) -> list[str]:
+    lines = [
+        "## Diagnostic summary",
+        "",
+        "### Failure modes",
+        "",
+    ]
+    lines.extend(_counter_lines(diagnostics.get("failure_modes") or {}))
+    lines.extend(["", "### Improvement targets", ""])
+    lines.extend(_counter_lines(diagnostics.get("targets") or {}))
+    lines.append("")
+    return lines
+
+
+def _counter_lines(values: dict[str, int]) -> list[str]:
+    if not values:
+        return ["Không có failure mode được ghi nhận."]
+    lines = ["| Name | Count |", "|------|-------|"]
+    for name, count in sorted(values.items(), key=lambda item: (-item[1], item[0])):
+        lines.append(f"| {name} | {count} |")
+    return lines
+
+
 def build_html(
     single: list[dict],
     multi: list[dict],
     generated_at: str,
     conversation: list[dict] | None = None,
+    parallel: list[dict] | None = None,
 ) -> str:
     from eval._html_report import build_html as _build_html
 
-    return _build_html(single, multi, generated_at, conversation or [])
+    return _build_html(single, multi, generated_at, conversation or [], parallel or [])

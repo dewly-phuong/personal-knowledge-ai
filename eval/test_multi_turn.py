@@ -166,9 +166,41 @@ _skip_reason: str | None = (
     if _records
     else ["skip"],
 )
-def test_multi_turn(record: dict[str, Any] | None):
+def test_multi_turn(record: dict[str, Any] | None, request: pytest.FixtureRequest):
     if _skip_reason or record is None:
         pytest.skip(_skip_reason or "no test cases")
+
+    assistant_turns = [
+        turn for turn in record.get("turns", []) if turn.get("role") == "assistant"
+    ]
+    request.node.user_properties.append(
+        (
+            "diagnostic_trace",
+            {
+                "suite": "multi_turn",
+                "category": record.get("scenario"),
+                "question": record.get("scenario"),
+                "expected": {
+                    "answer_checks": [record.get("expected_outcome", "")],
+                    "sources": [],
+                },
+                "actual": {
+                    "tool_batches": [],
+                    "tool_calls": [],
+                    "tool_outputs": [],
+                    "retrieval_context": [
+                        chunk
+                        for turn in assistant_turns
+                        for chunk in (turn.get("retrieval_context") or [])
+                    ],
+                    "final_answer": "\n\n".join(
+                        turn.get("content", "") for turn in assistant_turns
+                    ),
+                    "citations": [],
+                },
+            },
+        )
+    )
 
     for turn_case in _turn_cases(record):
         metrics = [_answer_relevancy]

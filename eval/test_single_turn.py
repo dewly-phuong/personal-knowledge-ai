@@ -38,6 +38,7 @@ from deepeval.metrics import (
 from deepeval.test_case import LLMTestCase, SingleTurnParams
 
 from eval.judge import GeminiJudge
+from eval.trace_capture import final_answer, tool_batches, tool_outputs
 
 load_dotenv()
 
@@ -132,7 +133,7 @@ _dataset = _load_dataset()
     _dataset.goldens,
     ids=[f"ST{i + 1:03d}" for i in range(len(_dataset.goldens))],
 )
-def test_single_turn(golden: Golden):
+def test_single_turn(golden: Golden, request: pytest.FixtureRequest):
     if not os.getenv("GOOGLE_API_KEY"):
         pytest.skip("GOOGLE_API_KEY not set")
     if not _dataset.goldens:
@@ -147,25 +148,9 @@ def test_single_turn(golden: Golden):
     )
     messages = result.get("messages", [])
 
-    actual_output = ""
-    retrieval_context = []
-
-    for msg in messages:
-        mtype = type(msg).__name__
-        if mtype == "ToolMessage":
-            content = getattr(msg, "content", "")
-            if isinstance(content, list):
-                content = " ".join(str(p) for p in content)
-            retrieval_context.append(str(content))
-        elif mtype == "AIMessage":
-            content = getattr(msg, "content", "")
-            if isinstance(content, list):
-                content = " ".join(
-                    b.get("text", "") if isinstance(b, dict) else str(b)
-                    for b in content
-                )
-            if content:
-                actual_output = content
+    actual_output = final_answer(messages)
+    outputs = tool_outputs(messages)
+    retrieval_context = [output["output"] for output in outputs]
 
     test_case = LLMTestCase(
         input=golden.input,
@@ -179,5 +164,31 @@ def test_single_turn(golden: Golden):
         metrics.append(_faithfulness)
     if getattr(golden, "expected_tools", None) is not None:
         metrics.append(_tool_correctness)
+
+    batches = tool_batches(messages)
+    request.node.user_properties.append(
+        (
+            "diagnostic_trace",
+            {
+                "suite": "single_turn",
+                "question": golden.input,
+                "expected": {
+                    "tools": getattr(golden, "expected_tools", None) or [],
+                    "answer_checks": [golden.expected_output]
+                    if golden.expected_output
+                    else [],
+                    "sources": [],
+                },
+                "actual": {
+                    "tool_batches": batches,
+                    "tool_calls": [call for batch in batches for call in batch],
+                    "tool_outputs": outputs,
+                    "retrieval_context": retrieval_context,
+                    "final_answer": actual_output,
+                    "citations": [],
+                },
+            },
+        )
+    )
 
     assert_test(test_case=test_case, metrics=metrics, run_async=False)

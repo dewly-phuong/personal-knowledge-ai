@@ -26,6 +26,13 @@ from typing import Any
 import pytest
 from dotenv import load_dotenv
 
+from eval.trace_capture import (
+    called_tool_names as _called_tool_names,
+    final_answer as _final_answer,
+    tool_batches as _tool_batches,
+    tool_outputs as _tool_outputs,
+)
+
 load_dotenv()
 
 DATASET_PATH = Path(__file__).parent / "datasets" / "parallel_function_calling_questions.json"
@@ -55,43 +62,6 @@ _skip_reason: str | None = (
     if not os.getenv("GOOGLE_API_KEY")
     else None
 )
-
-
-def _message_content(msg: Any) -> str:
-    content = getattr(msg, "content", "")
-    if isinstance(content, list):
-        return " ".join(
-            part.get("text", "") if isinstance(part, dict) else str(part)
-            for part in content
-        )
-    return str(content or "")
-
-
-def _tool_batches(messages: list[Any]) -> list[list[dict[str, Any]]]:
-    batches: list[list[dict[str, Any]]] = []
-    for msg in messages:
-        if type(msg).__name__ != "AIMessage":
-            continue
-        calls = []
-        for call in getattr(msg, "tool_calls", []) or []:
-            if isinstance(call, dict) and call.get("name"):
-                calls.append(
-                    {
-                        "name": call.get("name"),
-                        "args": call.get("args") or {},
-                        "id": call.get("id"),
-                    }
-                )
-        if calls:
-            batches.append(calls)
-    return batches
-
-
-def _called_tool_names(messages: list[Any]) -> list[str]:
-    names: list[str] = []
-    for batch in _tool_batches(messages):
-        names.extend(call["name"] for call in batch)
-    return names
 
 
 def _expected_parallel_calls(record: dict[str, Any]) -> list[dict[str, Any]]:
@@ -228,8 +198,12 @@ def test_parallel_function_calling(
     from app.agent import create_conversational_agent
 
     agent = create_conversational_agent(temperature=0)
-    result = agent.invoke({"messages": [{"role": "user", "content": record["question"]}]})
+    result = agent.invoke(
+        {"messages": [{"role": "user", "content": record["question"]}]}
+    )
     messages = result.get("messages", [])
+    batches = _tool_batches(messages)
+    actual_tool_calls = [call for batch in batches for call in batch]
 
     expected_calls = _expected_parallel_calls(record)
     required_calls = [call for call in expected_calls if not call.get("optional")]
@@ -237,17 +211,19 @@ def test_parallel_function_calling(
     actual_counts = Counter(_called_tool_names(messages))
     missing_counts = expected_counts - actual_counts
 
-    assert not missing_counts, (
-        f"{record['id']} did not call expected tools. "
-        f"Missing: {dict(missing_counts)}\n{_format_batches(_tool_batches(messages))}"
-    )
-
-    batches = _tool_batches(messages)
     parallel_satisfied = _parallel_expectation_satisfied(batches, required_calls, record)
     sequential_expected = Counter(
         item["tool"] for item in record.get("expected_sequential_group_2", [])
     )
     missing_sequential = sequential_expected - actual_counts
+    expected_sequential = [
+        {
+            "tool": item["tool"],
+            "args_hint": item.get("args_hint") or {},
+            "optional": bool(item.get("optional")),
+        }
+        for item in record.get("expected_sequential_group_2") or []
+    ]
 
     request.node.user_properties.append(
         (
@@ -271,6 +247,37 @@ def test_parallel_function_calling(
             },
         )
     )
+    request.node.user_properties.append(
+        (
+            "diagnostic_trace",
+            {
+                "suite": "parallel_function_calling",
+                "category": record.get("category"),
+                "question": record["question"],
+                "expected": {
+                    "parallel_group_1": expected_calls,
+                    "sequential_group_2": expected_sequential,
+                    "answer_checks": record.get("expected_answer_checks") or [],
+                    "sources": record.get("data_sources") or [],
+                },
+                "actual": {
+                    "tool_batches": batches,
+                    "tool_calls": actual_tool_calls,
+                    "tool_outputs": _tool_outputs(messages),
+                    "retrieval_context": [
+                        output["output"] for output in _tool_outputs(messages)
+                    ],
+                    "final_answer": _final_answer(messages),
+                    "citations": [],
+                },
+            },
+        )
+    )
+
+    assert not missing_counts, (
+        f"{record['id']} did not call expected tools. "
+        f"Missing: {dict(missing_counts)}\n{_format_batches(batches)}"
+    )
 
     assert parallel_satisfied, (
         f"{record['id']} did not emit expected calls in one parallel batch.\n"
@@ -281,12 +288,7 @@ def test_parallel_function_calling(
     )
 
     if "expected_sequential_group_2" in record:
-        final_answer = ""
-        for msg in reversed(messages):
-            if type(msg).__name__ == "AIMessage":
-                final_answer = _message_content(msg)
-                if final_answer:
-                    break
+        final_answer = _final_answer(messages)
         assert not missing_sequential, (
             f"{record['id']} did not call expected sequential tools. "
             f"Missing: {dict(missing_sequential)}\n{_format_batches(batches)}\n"

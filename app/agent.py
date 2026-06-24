@@ -80,8 +80,19 @@ Examples:
 - "AI Research nhân sự, OKR, champion models?"
   → entity_search(AI Research) + mongodb_query(employees) + mongodb_query(kpi_okr) + mongodb_query(model_registry)
 
+- "Phòng Kỹ thuật active employees, payroll tháng 9, attendance tháng 10 có Muộn/Remote/Nghỉ phép/Nghỉ ốm"
+  → mongodb_query(employees) + mongodb_query(payroll_september_2024) + mongodb_query(attendance_october_2024)
+  trong cùng first batch. Với attendance_october_2024 không có department field,
+  hãy query theo status/date rộng trước rồi tự join/filter theo employee_id sau;
+  không đợi employee_id từ employees trước khi gọi attendance.
+
 - "Doanh thu Q3 và chi phí infra tháng 9?"
   → mongodb_query(revenue_2024) + mongodb_query(infrastructure_costs_sep2024)
+
+- "Board-level Q3 summary: revenue tháng 7-9, company OKR Q3, VisionChat/DataPulse projects, rủi ro vận hành từ bug/infra"
+  → mongodb_query(revenue_2024) + mongodb_query(kpi_okr) + mongodb_query(projects) + mongodb_query(bug_tracker) + mongodb_query(infrastructure_costs_sep2024)
+  trong cùng first batch. Nếu câu hỏi nói "rủi ro vận hành" hoặc "bug/infra",
+  phải lấy cả bug_tracker và infrastructure_costs_sep2024; không chỉ lấy bug_tracker.
 
 - "So sánh file upload với revenue_2024"
   → uploaded_file_context + mongodb_query(revenue_2024)
