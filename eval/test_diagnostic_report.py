@@ -70,3 +70,49 @@ def test_diagnostic_summary_recomputes_failed_records_and_ignores_passed_warning
 
     assert summary["failure_modes"] == {"PARALLELISM_REGRESSION": 1}
     assert summary["targets"] == {"prompt_routing": 1}
+
+
+def test_diagnostic_summary_includes_failed_case_details_and_collections():
+    records = [
+        {
+            "test_id": "PFC018",
+            "passed": False,
+            "question": "Board summary",
+            "summary": {"parallel_batch_passed": False, "required_tools_passed": True},
+            "actual": {
+                "tool_batches": [
+                    [
+                        {"name": "mongodb_query", "args": {"collection": "revenue_2024"}},
+                        {"name": "mongodb_query", "args": {"collection": "bug_tracker"}},
+                    ]
+                ],
+                "tool_calls": [
+                    {"name": "mongodb_query", "args": {"collection": "revenue_2024"}},
+                    {"name": "mongodb_query", "args": {"collection": "bug_tracker"}},
+                ],
+                "tool_outputs": [
+                    {
+                        "name": "mongodb_query",
+                        "output": "Found 2 records in collection 'bug_tracker'",
+                    }
+                ],
+                "final_answer": "Không đủ dữ liệu\n\nNguồn: bug_tracker",
+            },
+        }
+    ]
+
+    summary = diagnostic_summary(records)
+
+    assert summary["collections"] == {"revenue_2024": 1, "bug_tracker": 1}
+    assert summary["failed_cases"] == [
+        {
+            "id": "PFC018",
+            "question": "Board summary",
+            "failure_modes": ["PARALLELISM_REGRESSION"],
+            "targets": ["prompt_routing"],
+            "tool_batches": [["mongodb_query:revenue_2024", "mongodb_query:bug_tracker"]],
+            "tool_outputs": ["mongodb_query: Found 2 records in collection 'bug_tracker'"],
+            "final_answer": "Không đủ dữ liệu\n\nNguồn: bug_tracker",
+            "suggested_fix": "Review prompt routing rules for this scenario.",
+        }
+    ]

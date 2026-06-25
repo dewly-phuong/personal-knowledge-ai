@@ -169,6 +169,12 @@ def _diagnostic_lines(diagnostics: dict) -> list[str]:
     lines.extend(_counter_lines(diagnostics.get("failure_modes") or {}))
     lines.extend(["", "### Improvement targets", ""])
     lines.extend(_counter_lines(diagnostics.get("targets") or {}))
+    lines.extend(["", "### Tool usage", ""])
+    lines.extend(_counter_lines(diagnostics.get("tools") or {}))
+    lines.extend(["", "### Collections", ""])
+    lines.extend(_counter_lines(diagnostics.get("collections") or {}))
+    lines.extend(["", "### Failure details", ""])
+    lines.extend(_failed_case_lines(diagnostics.get("failed_cases") or []))
     lines.append("")
     return lines
 
@@ -182,13 +188,60 @@ def _counter_lines(values: dict[str, int]) -> list[str]:
     return lines
 
 
+def _failed_case_lines(cases: list[dict]) -> list[str]:
+    if not cases:
+        return ["Không có failed trace để phân tích."]
+
+    lines: list[str] = []
+    for case in cases:
+        lines.extend(
+            [
+                f"#### {case.get('id') or '<unknown>'}",
+                "",
+                f"- Question: {short(case.get('question'), 180)}",
+                "- Failure modes: "
+                + _join_or_none(case.get("failure_modes") or []),
+                "- Improvement targets: "
+                + _join_or_none(case.get("targets") or []),
+                f"- Suggested fix: {case.get('suggested_fix') or 'Inspect trace.'}",
+            ]
+        )
+        batches = case.get("tool_batches") or []
+        if batches:
+            lines.append("- Tool batches:")
+            for index, batch in enumerate(batches, start=1):
+                lines.append(f"  - Batch {index}: {', '.join(batch)}")
+        outputs = case.get("tool_outputs") or []
+        if outputs:
+            lines.append("- Tool outputs:")
+            for output in outputs:
+                lines.append(f"  - {short(output, 180)}")
+        final_answer = case.get("final_answer")
+        if final_answer:
+            lines.append(f"- Final answer: {short(final_answer, 220)}")
+        lines.append("")
+    return lines
+
+
+def _join_or_none(values: list[str]) -> str:
+    return ", ".join(values) if values else "none"
+
+
 def build_html(
     single: list[dict],
     multi: list[dict],
     generated_at: str,
     conversation: list[dict] | None = None,
     parallel: list[dict] | None = None,
+    diagnostics: dict | None = None,
 ) -> str:
     from eval._html_report import build_html as _build_html
 
-    return _build_html(single, multi, generated_at, conversation or [], parallel or [])
+    return _build_html(
+        single,
+        multi,
+        generated_at,
+        conversation or [],
+        parallel or [],
+        diagnostics=diagnostics,
+    )

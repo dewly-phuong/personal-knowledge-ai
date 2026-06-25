@@ -236,7 +236,14 @@ def main():
         encoding="utf-8",
     )
     html_path.write_text(
-        build_html(single, multi, now, conversation, parallel=parallel),
+        build_html(
+            single,
+            multi,
+            now,
+            conversation,
+            parallel=parallel,
+            diagnostics=diagnostics,
+        ),
         encoding="utf-8",
     )
 

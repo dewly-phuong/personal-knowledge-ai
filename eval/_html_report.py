@@ -1,3 +1,5 @@
+import html
+
 from eval._report_builders import aggregate, avg, score_color, short
 
 
@@ -46,6 +48,7 @@ def build_html(
     generated_at: str,
     conversation: list[dict] | None = None,
     parallel: list[dict] | None = None,
+    diagnostics: dict | None = None,
 ) -> str:
     conversation = conversation or []
     parallel = parallel or []
@@ -65,9 +68,77 @@ def build_html(
     <div class="card"><div class="card-val">{len(multi)}</div><div class="card-lbl">Multi-turn</div></div>
     <div class="card"><div class="card-val">{len(conversation)}</div><div class="card-lbl">Unified conversation</div></div>
     <div class="card"><div class="card-val">{len(parallel)}</div><div class="card-lbl">Parallel function calling</div></div>
-  </div>{section_html(single, "Single-turn")}{section_html(multi, "Multi-turn")}{section_html(conversation, "Unified conversation")}
+  </div>{diagnostic_html(diagnostics or {})}{section_html(single, "Single-turn")}{section_html(multi, "Multi-turn")}{section_html(conversation, "Unified conversation")}
   {section_html(parallel, "Parallel function calling")}
 </div></body></html>"""
+
+
+def diagnostic_html(diagnostics: dict) -> str:
+    if not diagnostics:
+        return ""
+    return f"""
+    <section>
+      <h2>Diagnostic details</h2>
+      <div class="diagnostic-grid">
+        {_counter_card_html("Failure modes", diagnostics.get("failure_modes") or {})}
+        {_counter_card_html("Improvement targets", diagnostics.get("targets") or {})}
+        {_counter_card_html("Tools", diagnostics.get("tools") or {})}
+        {_counter_card_html("Collections", diagnostics.get("collections") or {})}
+      </div>
+      {_failed_cases_html(diagnostics.get("failed_cases") or [])}
+    </section>"""
+
+
+def _counter_card_html(title: str, values: dict[str, int]) -> str:
+    rows = "".join(
+        f"<tr><td>{html.escape(str(name))}</td><td>{count}</td></tr>"
+        for name, count in sorted(values.items(), key=lambda item: (-item[1], item[0]))
+    )
+    if not rows:
+        rows = "<tr><td colspan='2' class='reason'>none</td></tr>"
+    return f"""
+    <div class="diagnostic-card">
+      <h3>{html.escape(title)}</h3>
+      <table><tbody>{rows}</tbody></table>
+    </div>"""
+
+
+def _failed_cases_html(cases: list[dict]) -> str:
+    if not cases:
+        return "<p class='reason'>Không có failed trace để phân tích.</p>"
+    return "".join(_failed_case_html(case) for case in cases)
+
+
+def _failed_case_html(case: dict) -> str:
+    batches = _list_html(
+        [
+            f"Batch {index}: {', '.join(batch)}"
+            for index, batch in enumerate(case.get("tool_batches") or [], start=1)
+        ]
+    )
+    outputs = _list_html(case.get("tool_outputs") or [])
+    return f"""
+    <details class="diagnostic-case">
+      <summary>{html.escape(str(case.get("id") or "<unknown>"))}</summary>
+      <p><b>Question:</b> {html.escape(short(case.get("question"), 180))}</p>
+      <p><b>Failure modes:</b> {html.escape(_join_or_none(case.get("failure_modes") or []))}</p>
+      <p><b>Improvement targets:</b> {html.escape(_join_or_none(case.get("targets") or []))}</p>
+      <p><b>Suggested fix:</b> {html.escape(str(case.get("suggested_fix") or "Inspect trace."))}</p>
+      <p><b>Tool batches:</b></p>{batches}
+      <p><b>Tool outputs:</b></p>{outputs}
+      <p><b>Final answer:</b> {html.escape(short(case.get("final_answer"), 240))}</p>
+    </details>"""
+
+
+def _list_html(values: list[str]) -> str:
+    if not values:
+        return "<p class='reason'>none</p>"
+    items = "".join(f"<li>{html.escape(short(value, 220))}</li>" for value in values)
+    return f"<ul>{items}</ul>"
+
+
+def _join_or_none(values: list[str]) -> str:
+    return ", ".join(values) if values else "none"
 
 
 def _record_detail_html(record: dict) -> str:
@@ -125,4 +196,6 @@ h3{font-size:14px;font-weight:600;margin:16px 0 6px;color:#374151}.meta{color:#6
 .card{background:#fff;border:1px solid #e5e7eb;border-radius:10px;padding:14px 20px;min-width:140px}.card-val{font-size:28px;font-weight:700}.card-lbl{font-size:12px;color:#6b7280;margin-top:2px}
 table{width:100%;border-collapse:collapse;background:#fff;border:1px solid #e5e7eb;border-radius:8px;overflow:hidden;font-size:13px} th{background:#f3f4f6;text-align:left;padding:8px 12px;font-weight:600}
 td{padding:7px 12px;border-top:1px solid #f3f4f6;vertical-align:top}.reason{color:#4b5563;font-size:12px}.input-text{font-size:12px;color:#4b5563;margin:6px 0 0;font-style:italic} section{margin-bottom:40px}
+.diagnostic-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px;margin:12px 0}.diagnostic-card{background:#fff;border:1px solid #e5e7eb;border-radius:8px;padding:12px}
+.diagnostic-case{background:#fff;border:1px solid #e5e7eb;border-radius:8px;margin:8px 0;padding:10px 12px}.diagnostic-case summary{cursor:pointer;font-weight:600}.diagnostic-case p{margin:8px 0;color:#374151}.diagnostic-case ul{margin:4px 0 8px 20px;color:#374151}
 """
