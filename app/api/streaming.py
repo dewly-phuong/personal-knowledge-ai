@@ -37,6 +37,7 @@ async def chat_generator(
     total_output = 0
     output = ""
     new_messages = []
+    artifacts = []
 
     langfuse_handler = CallbackHandler(trace_context={"session_id": session_id})
     session_token = set_current_upload_session(session_id)
@@ -102,21 +103,15 @@ async def chat_generator(
                     total_input += usage.get("input_tokens", 0)
                     total_output += usage.get("output_tokens", 0)
 
-            # ── 5. Final graph output — extract last AI message ───────────────
-            elif kind == "on_chain_end" and event.get("name") == "LangGraph":
+            # ── 5. Final graph output — extract explicit LangGraph state ─────
+            elif kind == "on_chain_end":
                 result = event.get("data", {}).get("output", {})
+                if not isinstance(result, dict) or "final_answer" not in result:
+                    continue
+                output = str(result.get("final_answer") or "")
+                artifacts = result.get("artifacts") or []
                 msgs = result.get("messages", [])
                 if msgs:
-                    last = msgs[-1]
-                    raw_content = getattr(last, "content", "")
-                    output = (
-                        "".join(
-                            p["text"] if isinstance(p, dict) and "text" in p else str(p)
-                            for p in raw_content
-                        )
-                        if isinstance(raw_content, list)
-                        else str(raw_content)
-                    )
                     new_messages = msgs
 
     except Exception as e:
@@ -127,4 +122,7 @@ async def chat_generator(
     cost = _cost_tracker.add(total_input, total_output)
     if output or new_messages:
         await history_manager.append_turn(session_id, query, output, new_messages)
+    for artifact in artifacts:
+        if artifact.get("type") == "chart" and artifact.get("chart_json"):
+            yield f"data: {json.dumps({'type': 'chart', 'chart_json': artifact['chart_json']})}\n\n"
     yield f"data: {json.dumps({'type': 'done', 'output': output, 'usage': {'input': total_input, 'output': total_output}, 'cost': cost})}\n\n"

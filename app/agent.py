@@ -3,7 +3,8 @@ import warnings
 from datetime import datetime
 from dotenv import load_dotenv
 from langchain_google_genai import ChatGoogleGenerativeAI
-from langchain.agents import create_agent
+
+from app.agents import create_langgraph_agent
 
 load_dotenv()
 
@@ -136,10 +137,8 @@ If the result is empty, an error, or off-topic:
 - For CSV-backed MongoDB collections, imported numeric-looking fields may be strings.
   If a query using numeric month/year or numeric filters returns no records, retry once using string values, period/date fields, or regex.
 - Only conclude "not found" after checking all reasonable sources.
-- Retry here only changes the WORDING/format (numeric↔string, regex, a different collection) for the SAME time period the user aske
-d about.                                                                                                                           
-- Do NOT widen the time period to a different month/year just to get data. If the exact period has no data → report that no data wa
-s found.
+- Retry here only changes the WORDING/format (numeric↔string, regex, a different collection) for the SAME time period the user asked about.
+- Do NOT widen the time period to a different month/year just to get data. If the exact period has no data → report that no data was found.
 </validation>
 
 <answer_rules>
@@ -175,30 +174,11 @@ _DEFAULT_RECURSION_LIMIT = 25
 def create_conversational_agent(
     temperature: float = 1, recursion_limit: int = None, system_prompt: str = None
 ):
-    """Create a conversational agent using the new langchain.agents.create_agent API."""
-    from app.tools import (
-        uploaded_file_context,
-        entity_search,
-        wiki_search,
-        mongodb_query,
-        generate_chart,
-    )
-
+    """Create the LangGraph multi-agent runtime used by chat and evals."""
     llm = get_llm(temperature)
-
-    tools = [
-        uploaded_file_context,
-        entity_search,
-        wiki_search,
-        mongodb_query,
-        generate_chart,
-    ]
-
-    agent = create_agent(
-        model=llm,
-        tools=tools,
-        system_prompt=SYSTEM_PROMPT,
-    )
-
     limit = recursion_limit if recursion_limit is not None else _DEFAULT_RECURSION_LIMIT
-    return agent.with_config({"recursion_limit": limit})
+    return create_langgraph_agent(
+        llm=llm,
+        system_prompt=system_prompt or SYSTEM_PROMPT,
+        recursion_limit=limit,
+    )
