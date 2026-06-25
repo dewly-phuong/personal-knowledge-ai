@@ -33,7 +33,12 @@
       ],
       "used_source_files": [],
       "context_quality": null
-    }
+    },
+    "expected_tools": [
+      {
+        "name": "entity_search"
+      }
+    ]
   },
   {
     "id": "ST002",
@@ -69,7 +74,12 @@
       ],
       "used_source_files": [],
       "context_quality": null
-    }
+    },
+    "expected_tools": [
+      {
+        "name": "entity_search"
+      }
+    ]
   },
   {
     "id": "ST003",
@@ -89,7 +99,12 @@
       ],
       "used_source_files": [],
       "context_quality": null
-    }
+    },
+    "expected_tools": [
+      {
+        "name": "entity_search"
+      }
+    ]
   },
   {
     "id": "ST004",
@@ -109,7 +124,12 @@
       ],
       "used_source_files": [],
       "context_quality": null
-    }
+    },
+    "expected_tools": [
+      {
+        "name": "entity_search"
+      }
+    ]
   },
   {
     "id": "ST005",
@@ -129,7 +149,12 @@
       ],
       "used_source_files": [],
       "context_quality": null
-    }
+    },
+    "expected_tools": [
+      {
+        "name": "entity_search"
+      }
+    ]
   },
   {
     "id": "ST006",
@@ -149,7 +174,12 @@
       ],
       "used_source_files": [],
       "context_quality": null
-    }
+    },
+    "expected_tools": [
+      {
+        "name": "entity_search"
+      }
+    ]
   },
   {
     "id": "ST007",
@@ -170,7 +200,12 @@
       ],
       "used_source_files": [],
       "context_quality": null
-    }
+    },
+    "expected_tools": [
+      {
+        "name": "wiki_search"
+      }
+    ]
   },
   {
     "id": "ST008",
@@ -191,7 +226,12 @@
       ],
       "used_source_files": [],
       "context_quality": null
-    }
+    },
+    "expected_tools": [
+      {
+        "name": "wiki_search"
+      }
+    ]
   },
   {
     "id": "ST009",
@@ -212,7 +252,12 @@
       ],
       "used_source_files": [],
       "context_quality": null
-    }
+    },
+    "expected_tools": [
+      {
+        "name": "wiki_search"
+      }
+    ]
   },
   {
     "id": "ST010",
@@ -233,7 +278,12 @@
       ],
       "used_source_files": [],
       "context_quality": null
-    }
+    },
+    "expected_tools": [
+      {
+        "name": "wiki_search"
+      }
+    ]
   },
   {
     "id": "ST011",
@@ -253,7 +303,12 @@
       ],
       "used_source_files": [],
       "context_quality": null
-    }
+    },
+    "expected_tools": [
+      {
+        "name": "entity_search"
+      }
+    ]
   },
   {
     "id": "ST012",
@@ -273,7 +328,12 @@
       ],
       "used_source_files": [],
       "context_quality": null
-    }
+    },
+    "expected_tools": [
+      {
+        "name": "entity_search"
+      }
+    ]
   },
   {
     "id": "ST013",
@@ -294,7 +354,12 @@
       ],
       "used_source_files": [],
       "context_quality": null
-    }
+    },
+    "expected_tools": [
+      {
+        "name": "entity_search"
+      }
+    ]
   },
   {
     "id": "ST014",
@@ -315,7 +380,12 @@
       ],
       "used_source_files": [],
       "context_quality": null
-    }
+    },
+    "expected_tools": [
+      {
+        "name": "entity_search"
+      }
+    ]
   },
   {
     "id": "ST015",
@@ -344,7 +414,12 @@
       ],
       "used_source_files": [],
       "context_quality": null
-    }
+    },
+    "expected_tools": [
+      {
+        "name": "wiki_search"
+      }
+    ]
   },
   {
     "id": "ST016",
@@ -373,7 +448,12 @@
       ],
       "used_source_files": [],
       "context_quality": null
-    }
+    },
+    "expected_tools": [
+      {
+        "name": "wiki_search"
+      }
+    ]
   },
   {
     "id": "ST017",
@@ -394,7 +474,12 @@
       ],
       "used_source_files": [],
       "context_quality": null
-    }
+    },
+    "expected_tools": [
+      {
+        "name": "entity_search"
+      }
+    ]
   },
   {
     "id": "ST018",
@@ -415,7 +500,12 @@
       ],
       "used_source_files": [],
       "context_quality": null
-    }
+    },
+    "expected_tools": [
+      {
+        "name": "entity_search"
+      }
+    ]
   },
   {
     "id": "ST019",
@@ -435,7 +525,12 @@
       ],
       "used_source_files": [],
       "context_quality": null
-    }
+    },
+    "expected_tools": [
+      {
+        "name": "wiki_search"
+      }
+    ]
   },
   {
     "id": "ST020",
@@ -455,6 +550,11 @@
       ],
       "used_source_files": [],
       "context_quality": null
-    }
+    },
+    "expected_tools": [
+      {
+        "name": "wiki_search"
+      }
+    ]
   }
 ]

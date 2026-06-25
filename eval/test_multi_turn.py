@@ -29,7 +29,6 @@ from typing import Any
 import pytest
 from dotenv import load_dotenv
 
-from deepeval import assert_test
 from deepeval.metrics import (
     AnswerRelevancyMetric,
     ConversationCompletenessMetric,
@@ -41,6 +40,7 @@ from deepeval.test_case import ConversationalTestCase, LLMTestCase, Turn
 from deepeval.test_case.llm_test_case import ToolCall
 
 from eval.judge import GeminiJudge
+from eval.metric_capture import assert_test_with_metric_capture
 
 load_dotenv()
 
@@ -208,10 +208,16 @@ def test_multi_turn(record: dict[str, Any] | None, request: pytest.FixtureReques
             metrics.append(_faithfulness)
         if turn_case.expected_tools:
             metrics.append(_tool_correctness)
-        assert_test(test_case=turn_case, metrics=metrics, run_async=False)
+        assert_test_with_metric_capture(
+            request=request,
+            test_case=turn_case,
+            metrics=metrics,
+            run_async=False,
+        )
 
     conversation_case = _conversation_case(record)
-    assert_test(
+    assert_test_with_metric_capture(
+        request=request,
         test_case=conversation_case,
         metrics=_CONVERSATION_METRICS,
         run_async=False,

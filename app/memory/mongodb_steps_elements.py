@@ -16,7 +16,7 @@ class MongoStepElementMixin:
             db = self._get_db()
             await self.update_thread(step_dict["threadId"])
             doc = _step_doc(step_dict)
-            await db["cl_steps"].replace_one({"id": doc["id"]}, doc, upsert=True)
+            await db["cl_steps"].replace_one({"_id": doc["_id"]}, doc, upsert=True)
         except Exception as e:
             logger.error(f"MongoDBDataLayer: Error in create_step: {e}")
 
@@ -24,7 +24,7 @@ class MongoStepElementMixin:
         try:
             db = self._get_db()
             doc = _step_doc(step_dict)
-            await db["cl_steps"].replace_one({"id": doc["id"]}, doc, upsert=True)
+            await db["cl_steps"].replace_one({"_id": doc["_id"]}, doc, upsert=True)
         except Exception as e:
             logger.error(f"MongoDBDataLayer: Error in update_step: {e}")
 
@@ -40,7 +40,7 @@ class MongoStepElementMixin:
             doc = element.to_dict()
             doc["_id"] = doc["id"]
             _attach_element_content(doc, element)
-            await db["cl_elements"].replace_one({"id": doc["id"]}, doc, upsert=True)
+            await db["cl_elements"].replace_one({"_id": doc["_id"]}, doc, upsert=True)
         except Exception as e:
             logger.error(f"MongoDBDataLayer: Error in create_element: {e}")
 

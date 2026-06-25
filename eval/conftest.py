@@ -29,6 +29,7 @@ from typing import Any
 import pytest
 
 from eval.failure_modes import classify_failure_modes
+from eval.metric_capture import metric_to_dict
 
 # ---------------------------------------------------------------------------
 # Cấu hình
@@ -48,6 +49,19 @@ _metric_results_by_nodeid: dict[str, list[dict]] = defaultdict(list)
 _current_nodeid: contextvars.ContextVar[str | None] = contextvars.ContextVar(
     "current_pytest_nodeid", default=None
 )
+_EVAL_SCORE_FILES = {
+    "test_single_turn",
+    "test_multi_turn",
+    "test_conversation_dataset",
+    "test_parallel_function_calling",
+}
+_EVAL_USER_PROPERTY_KEYS = {
+    "deepeval_results",
+    "deepeval_metric_snapshot",
+    "diagnostic_trace",
+    "conversation_eval_summary",
+    "parallel_eval_summary",
+}
 
 
 # ---------------------------------------------------------------------------
@@ -56,14 +70,7 @@ _current_nodeid: contextvars.ContextVar[str | None] = contextvars.ContextVar(
 
 
 def _metric_to_dict(metric: Any) -> dict:
-    return {
-        "name": getattr(metric, "name", ""),
-        "score": round(float(getattr(metric, "score", 0) or 0), 4),
-        "threshold": float(getattr(metric, "threshold", 0) or 0),
-        "passed": bool(getattr(metric, "success", False)),
-        "reason": (getattr(metric, "reason", None) or "").strip(),
-        "error": str(getattr(metric, "error", "") or ""),
-    }
+    return metric_to_dict(metric)
 
 
 def _capture_test_results(test_results: list[Any]) -> None:
@@ -162,12 +169,17 @@ def pytest_runtest_logreport(report):
     """Ghi kết quả metric sau mỗi test vào scores.jsonl."""
     if report.when != "call":
         return
+    if getattr(report, "skipped", False):
+        return
 
     # Tách test_id (ví dụ: ST001, MT002) từ nodeid
     # nodeid dạng: eval/test_single_turn.py::test_single_turn[ST001]
     nodeid = report.nodeid
     test_id = nodeid.split("[")[-1].rstrip("]") if "[" in nodeid else nodeid
     file_name = nodeid.split("::")[0].split("/")[-1].replace(".py", "")
+    user_properties = list(getattr(report, "user_properties", []))
+    if not _should_record_score(file_name, user_properties):
+        return
 
     entry = {
         "run_id": RUN_ID,
@@ -181,7 +193,7 @@ def pytest_runtest_logreport(report):
     diagnostic_trace = None
 
     # Fallback cho các version Deepeval/pytest có gắn metric vào user_properties.
-    for key, val in getattr(report, "user_properties", []):
+    for key, val in user_properties:
         if key == "deepeval_results":
             for r in val:
                 entry["metrics"].append(
@@ -194,6 +206,8 @@ def pytest_runtest_logreport(report):
                         "error": str(getattr(r, "error", "") or ""),
                     }
                 )
+        elif key == "deepeval_metric_snapshot":
+            entry["metrics"].extend(_dedupe_metrics(entry["metrics"], val))
         elif key == "diagnostic_trace":
             diagnostic_trace = val
         elif key == "conversation_eval_summary":
@@ -327,3 +341,40 @@ def pytest_sessionfinish(session, exitstatus):
     print(f"{'=' * 60}")
     print(f"  Chi tiết: {SCORES_FILE}")
     print(f"{'=' * 60}\n")
+
+
+def _dedupe_metrics(
+    existing: list[dict[str, Any]], incoming: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    seen = {
+        (
+            item.get("name"),
+            item.get("score"),
+            item.get("threshold"),
+            item.get("reason"),
+            item.get("error"),
+        )
+        for item in existing
+    }
+    deduped = []
+    for item in incoming:
+        key = (
+            item.get("name"),
+            item.get("score"),
+            item.get("threshold"),
+            item.get("reason"),
+            item.get("error"),
+        )
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(item)
+    return deduped
+
+
+def _should_record_score(
+    file_name: str, user_properties: list[tuple[str, Any]]
+) -> bool:
+    if file_name in _EVAL_SCORE_FILES:
+        return True
+    return any(key in _EVAL_USER_PROPERTY_KEYS for key, _ in user_properties)

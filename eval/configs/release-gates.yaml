@@ -1,0 +1,15 @@
+release_gates:
+  critical:
+    task_success_rate:
+      min: 0.85
+    faithfulness_pass_rate:
+      min: 0.95
+    tool_correctness_pass_rate:
+      min: 0.90
+    parallel_batch_pass_rate:
+      min: 0.90
+  quality:
+    answer_relevance_pass_rate:
+      min: 0.90
+    conversation_score_pass_rate:
+      min: 0.80

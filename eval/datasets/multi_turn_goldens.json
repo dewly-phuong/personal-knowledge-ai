@@ -8,11 +8,16 @@
       {
         "role": "user",
         "content": "Hi there! I'm a new technical employee at TechVision AI, and I'm trying to get familiar with our system architecture. Could you give me an overview of the `auth-service`, especially its tech stack and how it handles authentication?",
-        "retrieval_context": []
+        "retrieval_context": [],
+        "expected_tools": [
+          {
+            "name": "entity_search"
+          }
+        ]
       },
       {
         "role": "assistant",
-        "content": "Chào mừng bạn đến với TechVision AI! R ất vui được giúp bạn làm quen với hệ thống của chúng ta. Dưới đây là tổng quan về `auth-service` dựa trên các tài liệu nội bộ.\n\n### Tổng quan về Dịch vụ Xác thực (Auth Service)\n\n`Auth Service` là một microservice cốt lõi trong nền tảng TechVision AI, chịu trách nhiệm chính cho việc xử lý xác thực (authentication) và ủy quyền (authorization) trên toàn hệ thống.\n\n#### Vai trò và Kiến trúc\n\nDịch vụ này hoạt động độc lập và giao tiếp với các dịch vụ khác chủ yếu qua REST API. Nó được triển khai trên nền tảng Kubernetes (AWS EKS) và tương tác chặt chẽ với **API Gateway**. API Gateway sử dụng `auth-service` để xác thực token, giới hạn tỷ lệ (rate limiting) và cân bằng tải trước khi chuyển tiếp yêu cầu đến các dịch vụ khác.\n\n#### Thông số kỹ thuật\n\n*   **Ngôn ngữ**: Go\n*   **Framework**: Gin\n*   **Port**: 8002\n*   **Triển khai**: 2 replicas trên Kubernetes\n*   **Tài nguyên**: 256MB RAM / 0.25 core CPU\n\n#### Cơ chế Xác thực\n\n`Auth Service` sử dụng cơ chế xác thực dựa trên **Bearer Token**. Mọi yêu cầu API gửi đến hệ thống đều phải đính kèm một token trong header `Authorization`.\n\n**Cách hoạt động:**\n1.  **Lấy Token**: Bạn có thể lấy API Token từ trang **Admin Portal → Settings → API Keys**.\n2.  **Sử dụng Token**: Khi gọi API, bạn cần thêm header sau vào yêu cầu của mình:\n    ```\n    Authorization: Bearer <your_api_token>\n    ```\n3.  **Vòng đời Token**: Các token này có hiệu lực trong **365 ngày** và có thể được xoay vòng (rotated) bất cứ lúc nào để tăng cường bảo mật. Về mặt công nghệ, dịch vụ sử dụng các cơ chế hiện đại như **JWT (JSON Web Token)** và **OAuth**.\n\n[Nguồn: Wiki - auth-service.md, jwtoauth.md, bearer-token.md]",
+        "content": "Dịch vụ `auth-service` là một microservice trọng yếu trong kiến trúc của TechVision AI, có vai trò xác thực và cấp quyền truy cập cho tất cả các yêu cầu đi vào hệ thống.\n### Tổng quan và Công nghệ\n*   **Ngôn ngữ & Framework**: Dịch vụ được xây dựng bằng `Go (Golang)` để đảm bảo hiệu suất cao và xử lý đồng thời hiệu quả.\n*   **Giao thức xác thực**: Hệ thống triển khai các tiêu chuẩn `JWT (JSON Web Token)` và `OAuth 2.0` để xác thực an toàn.\n*   **Cơ sở dữ liệu**: Dịch vụ sử dụng `Redis` để lưu trữ cache token và thông tin phiên (session), giúp tăng tốc độ truy vấn và giảm tải cho các dịch vụ khác.\n### Luồng xử lý xác thực\n\n1.  **Tiếp nhận yêu cầu**: Mọi yêu cầu từ bên ngoài (client) trước tiên sẽ đi qua `API Gateway`.\n2.  **Chuyển tiếp đến Auth Service**: `API Gateway` sẽ chuyển tiếp các yêu cầu cần xác thực đến `auth-service`.\n3.  **Xác thực Token**: Dịch vụ sẽ kiểm tra tính hợp lệ của token (thường là JWT) đính kèm trong header của yêu cầu.\n4.  **Cấp quyền**: Nếu token hợp lệ, dịch vụ sẽ xác nhận và cho phép yêu cầu được tiếp tục xử lý bởi các microservice nội bộ khác. Nếu không hợp lệ, yêu cầu sẽ bị từ chối.\n\nNguồn:\n- Graph: auth-service\n- Wiki: services/auth-service.md, concepts/authentication.md",
         "retrieval_context": [
           "'auth-service' not found in knowledge graph.",
           "[1] auth-service.md\n# Auth Service\n\nThe Auth Service is a core microservice within the TechVision AI Platform, primarily responsible for handling authentication and authorization across the system. It leverages modern token-based authentication mechanisms such as JWT and OAuth.\n\n## Role and Architecture\nThe Auth Service operates independently, communicating with other services primarily via REST API. It is deployed on [[wiki/platform/kubernetes]] within [[wiki/platform/aws-eks]].\n\nKey interactions:\n*   **[[wiki/platform/api-gateway|API Gateway]]**: The [[wiki/platform/api-gateway|API Gateway]] (powered by [[wiki/platform/kong|Kong]] and [[wiki/platform/nginx|Nginx]]) integrates with the Auth Service for rate limiting, authentication, and load balancing before routing requests to other services.\n*   **Admin Portal API**: Tokens, which have a validity of 365 days and can be rotated, are obtained from the [[wiki/service/admin-portal-api|Admin Portal]] settings. The Auth Service likely manages the issuance and validation of these tokens.\n\n## Technical Specifications\n\n| Detail | Value |\n| :----- | :---- |\n| **Language** | Go |\n| **Framework** | Gin |\n| **Port** | 8002 |\n| **Replicas** | 2 |\n| **RAM** | 256MB |\n| **CPU** | 0.25 core |\n\n## Authentication Mechanism\n\nThe Auth Service implements a Bearer Token authentication scheme. All API endpoints require a Bearer Token in the `Authorization` header.\n\nExample:\n```\nAuthorization: Bearer <your_api_token>\n```\n\nTokens are obtained from the [[wiki/service/admin-portal-api|Admin Portal]] → Settings → API Keys. These tokens are valid for 365 days and can be rotated as needed. The service uses [[wiki/tech/jwt|JWT]] and [[wiki/tech/oauth|OAuth]] for its authentication mechanisms.\n\n[2] jwtoauth.md\n# JWT/OAuth\n\nJWT (JSON Web Token) and OAuth (Open Authorization) are foundational technologies for secure authentication and authorization, frequently employed in modern distributed systems suchuses as the [[wiki/concept/techvision-ai-platform|TechVision AI Platform]].\n\n## Role in TechVision AI Platform\n\nWithin the [[wiki/concept/techvision-ai-platform]], JWT/OAuth is integral to managing user authentication and API access. The platform's architecture includes a dedicated `Auth Service` specifically designed for these functions.\n\n*   **Auth Service:** This [[wiki/concept/microservices|microservice]] is responsible for user authentication and the issuance of various tokens.\n    *   **Implementation:** Written in Go using the Gin framework.\n    *   **Network:** Runs on port `8002`.\n    *   **Deployment:** Configured with 2 replicas within the Kubernetes cluster.\n    *   **Resource Allocation:** Allocated 256MB of RAM and 0.25 CPU core.\n\nThe `Auth Service` works in conjunction with the [[wiki/concept/api-gateway|API Gateway]] (Kong + Nginx). The API Gateway performs initial authentication checks using tokens provided by clients before routing requests to the appropriate backend services.\n\n## Authentication Mechanisms\n\nAccess to the VisionChat API is secured through the use of Bearer Tokens.\n\n*   **API Tokens:**\n    *   **Acquisition:** API tokens are obtained from the Admin Portal via the \"Settings\" → \"API Keys\" section.\n    *   **Validity:** These tokens are valid for a period of 365 days and can be rotated as needed to enhance security.\n    *   **Usage:** For all API requests, the token must be included in the `Authorization` HTTP header:\n        ```\n        Authorization: Bearer <your_api_token>\n        ```\n*   **Session Tokens:**\n    *   **Generation:** Upon creating a new conversational session via the `POST /conversations` endpoint, a `session_token` is returned. This token, identified by its `eyJhbGc...` structure, suggests it is a JWT.\n    *   **Persistence:**...\n\n[3] admin-api.md\n# Admin API\n\nThe Admin API is a core [[wiki/concept/microservice]] within the [[wiki/system/techvision-ai-platform]] architecture, primarily responsible for backing the \"Admin Portal\" mentioned in the system overview. It provides administrative functionalities, likely used for managing users, configurations, API keys, and other platform settings.\n\n## Overview\n\nThe Admin API service is exposed through the central [[wiki/service/api-gateway]] (Kong + Nginx) and integrates into the overall [[wiki/concept/microservices-architecture]] deployed on [[wiki/tech/kubernetes]] (AWS EKS).\n\n## Technical Specifications\n\n*   **Service Name:** `admin-api`\n*   **Language:** [[wiki/tech/python]]\n*   **Framework:** [[wiki/tech/fastapi]]\n*   **Port:** 8007\n*   **Replicas:** 2\n*   **Resource Allocation:**\n    *   **RAM:** 512MB\n    *   **CPU:** 0.5 core\n\n## Related Services and Components\n\n*   [[wiki/service/api-gateway]]: Handles routing, rate limiting, authentication, and load balancing for the Admin API.\n*   [[wiki/service/auth-service]]: Likely used by the Admin API for authenticating administrative users (e.g., via JWT/OAuth).\n*   [[wiki/system/techvision-ai-platform]]: The overarching system within which the Admin API operates.\n\n[4] notification-service.md\n# Notification Service\n\nThe Notification Service is a core component within the [[wiki/platform/techvision-ai-platform|TechVision AI Platform]], designed to handle and dispatch various notifications. It operates as a [[wiki/concept/microservices|microservice]] within the system's [[wiki/concept/kubernetes|Kubernetes]] deployment on AWS EKS.\n\n## Technical Specifications\n\n*   **Language:** [[wiki/tech/go|Go]]\n*   **Framework:** [[wiki/tech/gin|Gin]]\n*   **Port:** 8008\n*   **Replicas:** 1\n*   **RAM:** 256MB\n*   **CPU:** 0.25 core\n\n## Role and Integration\n\nAs part of the [[wiki/platform/techvision-ai-platform|TechVision AI Platform]], the Notification Service likely plays a crucial role in delivering timely updates, alerts, or messages related to user interactions, system events, or administrative actions. While specific functionalities are not detailed, its presence suggests it integrates with other services for event-driven notifications, potentially utilizing [[wiki/tech/kafka|Kafka]] for message queuing.\n\nIt is part of a broader architecture that includes services like [[wiki/service/api-gateway|API Gateway]], [[wiki/service/channel-adapter|Channel Adapter]], [[wiki/service/auth-service|Auth Service]], [[wiki/service/bot-engine|Bot Engine]], and [[wiki/service/human-agent-service|Human Agent Service]].\n\n[5] bearer-token.md\n# Bearer Token\n\nA **Bearer Token** is a security token used in [[wiki/security/authentication]] schemes, primarily with [[wiki/concepts/rest-api|REST APIs]]. The term \"bearer\" implies that whoever possesses the token (\"the bearer\") is granted access to protected resources, without needing further proof of identity. It's a fundamental component of token-based authentication and is widely adopted due to its simplicity and stateless nature.\n\n## Usage\n\nBearer tokens are typically included in the `Authorization` [[wiki/concepts/http-header|HTTP header]] of an [[wiki/concepts/http-request|HTTP request]]. The header format is standardized as:\n\n```\nAuthorization: Bearer <token_string>\n```\n\n### TechVision AI Platform API\n\nFor the TechVision AI Platform API, all API endpoints require a Bearer Token. This token acts as an [[wiki/security/api-key|API Key]] that grants access to the platform's services.\n\nExample API request header:\n\n```\nAuthorization: Bearer <your_api_token>\n```\n\n## Acquisition (TechVision AI Platform)\n\nClient applications and users can obtain their specific Bearer Token (referred to as `<your_api_token>` in the API documentation) for the TechVision AI Platform from the [[wiki/systems/admin-portal|Admin Portal]] by navigating to `Settings → API Keys`.\n\n## Lifecycle (TechVision AI Platform)\n\nThe Bearer Tokens (API Keys) used with the TechVision AI Platform API have the following characteristics:\n\n*   **Validity**: Each token is valid for 365 days from the point of generation.\n*   **Rotation**: For enhanced [[wiki/security/security|security]] and management, tokens can be rotated (regenerated) at any time through the [[wiki/systems/admin-portal|Admin Portal]].\n\n## Related Concepts\n\n*   [[wiki/security/api-key|API Key]]: Bearer tokens are often implemented using specific API Keys or [[wiki/security/jwt|JSON Web Tokens (JWTs)]]. The TechVision platform's API Keys function as Bearer Tokens.\n*   [[wiki/security/authentication|Authentication]]: The overall process of v..."
@@ -29,7 +34,15 @@
       {
         "role": "user",
         "content": "Hi! I'm a senior developer working on a new client integration and I have some questions about our API Gateway. Could you tell me about its technology, main functions, and how it connects with other services?",
-        "retrieval_context": []
+        "retrieval_context": [],
+        "expected_tools": [
+          {
+            "name": "entity_search"
+          },
+          {
+            "name": "mongodb_query"
+          }
+        ]
       },
       {
         "role": "assistant",
@@ -50,7 +63,12 @@
       {
         "role": "user",
         "content": "Hi there! As a product manager, I'm looking to understand TechVision's CI/CD process better. Could you walk me through the steps from commit to production and the tools involved?",
-        "retrieval_context": []
+        "retrieval_context": [],
+        "expected_tools": [
+          {
+            "name": "wiki_search"
+          }
+        ]
       },
       {
         "role": "assistant",
@@ -107,7 +125,12 @@
       {
         "role": "user",
         "content": "Hi there! As a new employee, I'm trying to get up to speed on our HR policies. Could you help me understand the company's leave policies, especially regarding annual leave, the application process, and our work-from-home policy?",
-        "retrieval_context": []
+        "retrieval_context": [],
+        "expected_tools": [
+          {
+            "name": "wiki_search"
+          }
+        ]
       },
       {
         "role": "assistant",
@@ -184,7 +207,12 @@
       {
         "role": "user",
         "content": "Cảm ơn bạn rất nhiều vì thông tin chi tiết về chính sách nghỉ phép! Về chính sách làm việc tại nhà, tôi nên liên hệ với Phòng Nhân sự bằng cách nào tốt nhất?",
-        "retrieval_context": []
+        "retrieval_context": [],
+        "expected_tools": [
+          {
+            "name": "mongodb_query"
+          }
+        ]
       },
       {
         "role": "assistant",
@@ -250,7 +278,12 @@
       {
         "role": "user",
         "content": "Tuyệt vời, cảm ơn bạn rất nhiều! Tôi sẽ liên hệ với Phòng Nhân sự qua email.",
-        "retrieval_context": []
+        "retrieval_context": [],
+        "expected_tools": [
+          {
+            "name": "mongodb_query"
+          }
+        ]
       },
       {
         "role": "assistant",
@@ -268,7 +301,12 @@
       {
         "role": "user",
         "content": "Hi! I'm designing the architecture for a new feature and I'd love to explore the relationships between the bot-engine, NLU service, RAG engine, and response generator. Could you help me understand how they interact?",
-        "retrieval_context": []
+        "retrieval_context": [],
+        "expected_tools": [
+          {
+            "name": "entity_search"
+          }
+        ]
       },
       {
         "role": "assistant",
@@ -290,7 +328,12 @@
       {
         "role": "user",
         "content": "Hi! I'm a solution architect evaluating system scalability and I'm very interested in your knowledge-base-indexer. Could you please explain its processing pipeline, key components, and how data flows into the vector database?",
-        "retrieval_context": []
+        "retrieval_context": [],
+        "expected_tools": [
+          {
+            "name": "entity_search"
+          }
+        ]
       },
       {
         "role": "assistant",
@@ -311,7 +354,12 @@
       {
         "role": "user",
         "content": "Hi! I'm working on our monthly attendance report and I need some help. Could you please provide a list of all employees who were late in October 2024, along with how many times each person was late?",
-        "retrieval_context": []
+        "retrieval_context": [],
+        "expected_tools": [
+          {
+            "name": "mongodb_query"
+          }
+        ]
       },
       {
         "role": "assistant",
@@ -329,7 +377,12 @@
       {
         "role": "user",
         "content": "Hi! I'm working on an operating cost report and need to get the total infrastructure costs for September 2024. Could you help me break that down by provider and service category?",
-        "retrieval_context": []
+        "retrieval_context": [],
+        "expected_tools": [
+          {
+            "name": "mongodb_query"
+          }
+        ]
       },
       {
         "role": "assistant",
@@ -339,7 +392,12 @@
       {
         "role": "user",
         "content": "Thanks for the detailed breakdown! Could you now show me the AWS costs broken down by service category?",
-        "retrieval_context": []
+        "retrieval_context": [],
+        "expected_tools": [
+          {
+            "name": "mongodb_query"
+          }
+        ]
       },
       {
         "role": "assistant",
@@ -357,7 +415,12 @@
       {
         "role": "user",
         "content": "Hi, I'm preparing for the board meeting and need some key revenue data. Could you please provide the total MRR, new customer count, churn rate, and gross margin for June through September 2024?",
-        "retrieval_context": []
+        "retrieval_context": [],
+        "expected_tools": [
+          {
+            "name": "mongodb_query"
+          }
+        ]
       },
       {
         "role": "assistant",
@@ -375,7 +438,12 @@
       {
         "role": "user",
         "content": "Hi there! I'm reviewing the quality status for our current sprint. Could you please provide a list of all open Critical priority bugs and who they're assigned to?",
-        "retrieval_context": []
+        "retrieval_context": [],
+        "expected_tools": [
+          {
+            "name": "mongodb_query"
+          }
+        ]
       },
       {
         "role": "assistant",
@@ -393,7 +461,15 @@
       {
         "role": "user",
         "content": "Hi team, as a new hire, I'm trying to get up to speed. Could someone explain what the NLU service is, how it connects with other services, and if there are any current sprint tickets related to it?",
-        "retrieval_context": []
+        "retrieval_context": [],
+        "expected_tools": [
+          {
+            "name": "entity_search"
+          },
+          {
+            "name": "mongodb_query"
+          }
+        ]
       },
       {
         "role": "assistant",
@@ -414,7 +490,12 @@
       {
         "role": "user",
         "content": "Hi team, I'm working on our Q4 headcount planning and we're looking to expand our Python developer team. Could you provide an update on our current recruitment pipeline, specifically how many active candidates we have and which positions are currently seeing the most hiring activity?",
-        "retrieval_context": []
+        "retrieval_context": [],
+        "expected_tools": [
+          {
+            "name": "mongodb_query"
+          }
+        ]
       },
       {
         "role": "assistant",
@@ -424,7 +505,12 @@
       {
         "role": "user",
         "content": "Okay, I understand there are no active Python developer candidates. Can you tell me if the recruitment plan for Python developers has been initiated or if it's still in the sourcing phase?",
-        "retrieval_context": []
+        "retrieval_context": [],
+        "expected_tools": [
+          {
+            "name": "mongodb_query"
+          }
+        ]
       },
       {
         "role": "assistant",
@@ -437,7 +523,12 @@
       {
         "role": "user",
         "content": "Thanks for the update. So, are Python developers included in the 5 engineers planned for Backend and AI roles, and if so, what's the specific plan for those positions?",
-        "retrieval_context": []
+        "retrieval_context": [],
+        "expected_tools": [
+          {
+            "name": "mongodb_query"
+          }
+        ]
       },
       {
         "role": "assistant",
@@ -496,7 +587,15 @@
       {
         "role": "user",
         "content": "Hi there! I need to prepare an update for our stakeholders on the DataPulse project. Could you please provide the current progress percentage, total budget, amount spent so far, and the estimated deadline?",
-        "retrieval_context": []
+        "retrieval_context": [],
+        "expected_tools": [
+          {
+            "name": "entity_search"
+          },
+          {
+            "name": "mongodb_query"
+          }
+        ]
       },
       {
         "role": "assistant",
@@ -514,7 +613,15 @@
       {
         "role": "user",
         "content": "Hi! I'm a business analyst preparing a pitch and I'm very interested in VisionChat. Could you share some insights on its current accuracy, MRR, customer numbers, and perhaps highlight its most impressive features?",
-        "retrieval_context": []
+        "retrieval_context": [],
+        "expected_tools": [
+          {
+            "name": "entity_search"
+          },
+          {
+            "name": "mongodb_query"
+          }
+        ]
       },
       {
         "role": "assistant",
@@ -527,7 +634,12 @@
       {
         "role": "user",
         "content": "Thank you for the detailed information! The 'Knowledge Base' feature sounds very powerful. Could you share a specific example of how a client has leveraged it to improve their customer service?",
-        "retrieval_context": []
+        "retrieval_context": [],
+        "expected_tools": [
+          {
+            "name": "mongodb_query"
+          }
+        ]
       },
       {
         "role": "assistant",
@@ -540,7 +652,15 @@
       {
         "role": "user",
         "content": "That's a very compelling case study. How long does a typical implementation of VisionChat, especially with the Knowledge Base, usually take for a client like FPT Shop?",
-        "retrieval_context": []
+        "retrieval_context": [],
+        "expected_tools": [
+          {
+            "name": "entity_search"
+          },
+          {
+            "name": "mongodb_query"
+          }
+        ]
       },
       {
         "role": "assistant",
@@ -550,7 +670,12 @@
       {
         "role": "user",
         "content": "That's a clear breakdown. What kind of team or resources would a client typically need to dedicate to the implementation process on their end?",
-        "retrieval_context": []
+        "retrieval_context": [],
+        "expected_tools": [
+          {
+            "name": "mongodb_query"
+          }
+        ]
       },
       {
         "role": "assistant",
@@ -560,7 +685,15 @@
       {
         "role": "user",
         "content": "That's a clear picture of the client's responsibilities. What kind of ongoing support does VisionChat provide after the initial implementation?",
-        "retrieval_context": []
+        "retrieval_context": [],
+        "expected_tools": [
+          {
+            "name": "entity_search"
+          },
+          {
+            "name": "mongodb_query"
+          }
+        ]
       },
       {
         "role": "assistant",
@@ -578,7 +711,15 @@
       {
         "role": "user",
         "content": "Hi team, I'm putting together the retrospective report for the recent incident. Could you please provide details on the hotfix v1.2.1, specifically when the incident occurred, how long it took to resolve, the number of affected sessions, and the root cause?",
-        "retrieval_context": []
+        "retrieval_context": [],
+        "expected_tools": [
+          {
+            "name": "entity_search"
+          },
+          {
+            "name": "mongodb_query"
+          }
+        ]
       },
       {
         "role": "assistant",
@@ -599,7 +740,12 @@
       {
         "role": "user",
         "content": "Hi team, I'm preparing for the Q3 board presentation. Could you give me a quick overview of our Q3 OKR results, including actual revenue vs. target, contracts signed, and which OKRs we achieved?",
-        "retrieval_context": []
+        "retrieval_context": [],
+        "expected_tools": [
+          {
+            "name": "mongodb_query"
+          }
+        ]
       },
       {
         "role": "assistant",
@@ -609,7 +755,8 @@
       {
         "role": "user",
         "content": "Okay, I understand. Is there any other Q3 data available that might be useful for the presentation?",
-        "retrieval_context": []
+        "retrieval_context": [],
+        "expected_tools": []
       },
       {
         "role": "assistant",
@@ -619,7 +766,12 @@
       {
         "role": "user",
         "content": "Thanks, this is helpful. Can you summarize the total value of these new customer contracts for Q3?",
-        "retrieval_context": []
+        "retrieval_context": [],
+        "expected_tools": [
+          {
+            "name": "mongodb_query"
+          }
+        ]
       },
       {
         "role": "assistant",
@@ -629,7 +781,12 @@
       {
         "role": "user",
         "content": "Thanks. Can you also give me the total of those September operational costs?",
-        "retrieval_context": []
+        "retrieval_context": [],
+        "expected_tools": [
+          {
+            "name": "mongodb_query"
+          }
+        ]
       },
       {
         "role": "assistant",
@@ -639,7 +796,8 @@
       {
         "role": "user",
         "content": "Thanks for that summary.",
-        "retrieval_context": []
+        "retrieval_context": [],
+        "expected_tools": []
       },
       {
         "role": "assistant",
@@ -657,7 +815,12 @@
       {
         "role": "user",
         "content": "Hi! I'm getting ready for our next retrospective and capacity planning. Could you please provide the sprint velocity for our last three sprints, showing committed versus completed story points, and let me know which sprint had the lowest completion rate?",
-        "retrieval_context": []
+        "retrieval_context": [],
+        "expected_tools": [
+          {
+            "name": "mongodb_query"
+          }
+        ]
       },
       {
         "role": "assistant",
@@ -667,7 +830,12 @@
       {
         "role": "user",
         "content": "Thanks for this! Could you also provide the data for the third sprint I requested?",
-        "retrieval_context": []
+        "retrieval_context": [],
+        "expected_tools": [
+          {
+            "name": "mongodb_query"
+          }
+        ]
       },
       {
         "role": "assistant",
@@ -677,7 +845,12 @@
       {
         "role": "user",
         "content": "Okay, I understand. Can you tell me more about why Sprint Q4-S1 had 0% completion?",
-        "retrieval_context": []
+        "retrieval_context": [],
+        "expected_tools": [
+          {
+            "name": "mongodb_query"
+          }
+        ]
       },
       {
         "role": "assistant",
@@ -690,7 +863,12 @@
       {
         "role": "user",
         "content": "So, was EMP008's leave the main reason for the 0% completion, or were there other contributing factors?",
-        "retrieval_context": []
+        "retrieval_context": [],
+        "expected_tools": [
+          {
+            "name": "mongodb_query"
+          }
+        ]
       },
       {
         "role": "assistant",
@@ -748,7 +926,12 @@
       {
         "role": "user",
         "content": "Hi! I'm working on our Enterprise customer retention strategy and would love to see the NPS and CSAT scores for Q3/2024, sorted by the lowest scores. Could you pull that data for me?",
-        "retrieval_context": []
+        "retrieval_context": [],
+        "expected_tools": [
+          {
+            "name": "mongodb_query"
+          }
+        ]
       },
       {
         "role": "assistant",
@@ -758,7 +941,12 @@
       {
         "role": "user",
         "content": "Okay, I understand. Is there any other customer engagement or health data available for Enterprise clients in Q3/2024 that could help me with retention?",
-        "retrieval_context": []
+        "retrieval_context": [],
+        "expected_tools": [
+          {
+            "name": "mongodb_query"
+          }
+        ]
       },
       {
         "role": "assistant",
@@ -776,7 +964,12 @@
       {
         "role": "user",
         "content": "Hi! I'm a developer working on VisionChat and need to assess the impact of a breaking change. Could you help me identify which services VisionChat depends on, and which services depend on VisionChat?",
-        "retrieval_context": []
+        "retrieval_context": [],
+        "expected_tools": [
+          {
+            "name": "entity_search"
+          }
+        ]
       },
       {
         "role": "assistant",
@@ -796,7 +989,12 @@
       {
         "role": "user",
         "content": "Hi! I just started my on-call rotation and I'm looking to get a clear understanding of our P1 incident process. Could you walk me through the pipeline steps, specific SLAs, and let me know how many P1 incidents are currently open this month?",
-        "retrieval_context": []
+        "retrieval_context": [],
+        "expected_tools": [
+          {
+            "name": "wiki_search"
+          }
+        ]
       },
       {
         "role": "assistant",

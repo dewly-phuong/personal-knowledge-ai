@@ -20,7 +20,6 @@ from typing import Any
 import pytest
 from dotenv import load_dotenv
 
-from deepeval import assert_test
 from deepeval.metrics import (
     AnswerRelevancyMetric,
     ConversationalGEval,
@@ -35,6 +34,7 @@ from deepeval.test_case.conversational_test_case import MultiTurnParams
 from deepeval.test_case.llm_test_case import ToolCall
 
 from eval.judge import GeminiJudge
+from eval.metric_capture import assert_test_with_metric_capture
 
 load_dotenv()
 
@@ -320,7 +320,12 @@ def test_conversation_dataset(record: dict[str, Any] | None, request: pytest.Fix
         if expected_tools:
             turn_metrics.append(_tool_correctness)
 
-        assert_test(test_case=turn_case, metrics=turn_metrics, run_async=False)
+        assert_test_with_metric_capture(
+            request=request,
+            test_case=turn_case,
+            metrics=turn_metrics,
+            run_async=False,
+        )
         metric_results = _metric_snapshot(turn_metrics)
         turn_results.append(
             {
@@ -346,7 +351,12 @@ def test_conversation_dataset(record: dict[str, Any] | None, request: pytest.Fix
     conv_metrics = [_conv_geval]
     if len(actual_turns) > 2:
         conv_metrics.insert(0, _conv_retention)
-    assert_test(test_case=conv_case, metrics=conv_metrics, run_async=False)
+    assert_test_with_metric_capture(
+        request=request,
+        test_case=conv_case,
+        metrics=conv_metrics,
+        run_async=False,
+    )
 
     conversation_metrics = _metric_snapshot(conv_metrics)
     _record_conversation_summary(request, turn_results, conversation_metrics)

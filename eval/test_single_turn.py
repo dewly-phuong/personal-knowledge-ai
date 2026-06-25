@@ -27,7 +27,6 @@ from pathlib import Path
 import pytest
 from dotenv import load_dotenv
 
-from deepeval import assert_test
 from deepeval.dataset import EvaluationDataset, Golden
 from deepeval.metrics import (
     AnswerRelevancyMetric,
@@ -38,6 +37,7 @@ from deepeval.metrics import (
 from deepeval.test_case import LLMTestCase, SingleTurnParams
 
 from eval.judge import GeminiJudge
+from eval.metric_capture import assert_test_with_metric_capture
 from eval.trace_capture import final_answer, tool_batches, tool_outputs
 
 load_dotenv()
@@ -191,4 +191,9 @@ def test_single_turn(golden: Golden, request: pytest.FixtureRequest):
         )
     )
 
-    assert_test(test_case=test_case, metrics=metrics, run_async=False)
+    assert_test_with_metric_capture(
+        request=request,
+        test_case=test_case,
+        metrics=metrics,
+        run_async=False,
+    )
