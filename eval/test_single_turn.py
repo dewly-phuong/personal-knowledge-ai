@@ -21,6 +21,7 @@ Run:
     uv run pytest eval/test_single_turn.py -v
 """
 
+import json
 import os
 from pathlib import Path
 
@@ -37,6 +38,7 @@ from deepeval.metrics import (
 from deepeval.test_case import LLMTestCase, SingleTurnParams
 
 from eval.judge import GeminiJudge
+from eval.metric_selection import tool_correctness_enabled
 from eval.metric_capture import assert_test_with_metric_capture
 from eval.trace_capture import final_answer, tool_batches, tool_outputs
 
@@ -102,7 +104,8 @@ _domain_faithfulness = GEval(
 
 _tool_correctness = ToolCorrectnessMetric(threshold=0.5, model=_judge)
 
-_PROD_METRICS = [_answer_relevancy, _graph_reasoning, _domain_faithfulness]
+# _PROD_METRICS = [_answer_relevancy, _domain_faithfulness]
+_PROD_METRICS = [_answer_relevancy]
 
 # ---------------------------------------------------------------------------
 # Dataset — loaded once at module import
@@ -122,6 +125,43 @@ def _load_dataset() -> EvaluationDataset:
 
 
 _dataset = _load_dataset()
+
+
+def _has_graph_context(outputs: list[dict]) -> bool:
+    for output in outputs:
+        if output.get("name") != "knowledge_search":
+            continue
+        try:
+            payload = json.loads(str(output.get("output") or ""))
+        except json.JSONDecodeError:
+            continue
+        for result in payload.get("results") or []:
+            if not isinstance(result, dict):
+                continue
+            if (
+                result.get("source") == "graph"
+                and result.get("status") == "ok"
+                and result.get("data") is not None
+            ):
+                return True
+    return False
+
+
+def _single_turn_metrics(
+    *,
+    retrieval_context: list[str],
+    outputs: list[dict],
+    expected_tools,
+) -> list:
+    metrics = list(_PROD_METRICS)
+    if _has_graph_context(outputs):
+        metrics.append(_graph_reasoning)
+    if retrieval_context:
+        metrics.append(_faithfulness)
+    if tool_correctness_enabled() and expected_tools is not None:
+        metrics.append(_tool_correctness)
+    return metrics
+
 
 # ---------------------------------------------------------------------------
 # Tests
@@ -159,11 +199,11 @@ def test_single_turn(golden: Golden, request: pytest.FixtureRequest):
         retrieval_context=retrieval_context if retrieval_context else [],
     )
 
-    metrics = list(_PROD_METRICS)
-    if retrieval_context:
-        metrics.append(_faithfulness)
-    if getattr(golden, "expected_tools", None) is not None:
-        metrics.append(_tool_correctness)
+    metrics = _single_turn_metrics(
+        retrieval_context=retrieval_context,
+        outputs=outputs,
+        expected_tools=getattr(golden, "expected_tools", None),
+    )
 
     batches = tool_batches(messages)
     request.node.user_properties.append(

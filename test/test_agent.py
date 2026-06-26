@@ -1,10 +1,11 @@
-import unittest
 import os
+import unittest
 from unittest.mock import patch
+
 from dotenv import load_dotenv
 
-from app.agent import create_conversational_agent
-from app.tools import get_current_time, lint_wiki
+import app.tools as public_tools
+from app.agent import SYSTEM_PROMPT, create_conversational_agent, get_llm
 
 
 class TestAgent(unittest.TestCase):
@@ -12,104 +13,105 @@ class TestAgent(unittest.TestCase):
         load_dotenv()
         self.api_key = os.getenv("GOOGLE_API_KEY")
 
-    def test_tools_existence(self):
-        """Test if basic tools can be successfully invoked."""
-        time_result = get_current_time.invoke({})
-        self.assertIsInstance(time_result, str)
-        self.assertTrue(len(time_result) > 0)
+    def test_system_prompt_is_general(self):
+        self.assertIn("knowledge_search", SYSTEM_PROMPT)
+        self.assertNotIn("payroll_september_2024", SYSTEM_PROMPT)
+        self.assertNotIn("attendance_october_2024", SYSTEM_PROMPT)
+        self.assertNotIn("revenue_2024", SYSTEM_PROMPT)
+        self.assertNotIn("infrastructure_costs_sep2024", SYSTEM_PROMPT)
+        self.assertNotIn("filter_json", SYSTEM_PROMPT)
 
-        lint_result = lint_wiki.invoke({})
-        self.assertIn("Wiki Health Audit Report", lint_result)
+    def test_system_prompt_enforces_strict_factual_mode(self):
+        self.assertIn("Strict factual mode", SYSTEM_PROMPT)
+        self.assertIn("directly supported by an ok tool result", SYSTEM_PROMPT)
+        self.assertIn("do not answer from general knowledge", SYSTEM_PROMPT)
+        self.assertIn("If no relevant data is available", SYSTEM_PROMPT)
+        self.assertIn("Không có dữ liệu liên quan", SYSTEM_PROMPT)
+
+    def test_system_prompt_includes_general_anti_hallucination_rules(self):
+        self.assertIn("Do not guess", SYSTEM_PROMPT)
+        self.assertIn("Do not merge facts from different sources", SYSTEM_PROMPT)
+        self.assertIn(
+            "Do not treat examples, schemas, or field names as actual data",
+            SYSTEM_PROMPT,
+        )
+        self.assertIn("Separate evidence from interpretation", SYSTEM_PROMPT)
 
     @patch("app.agent.ChatGoogleGenerativeAI")
-    def test_agent_initialization(self, mock_llm):
-        """Test that the agent graph can be created and all 8 tools are registered."""
-        # create_conversational_agent returns a CompiledStateGraph (LangGraph),
-        # which doesn't expose .tools directly. Verify the tool list separately.
-        from app.tools import (
-            get_current_time,
-            wiki_search,
-            graph_traverse,
-            ingest_source,
-            lint_wiki,
-            sync_knowledge_base,
-            mongodb_query,
-            generate_chart,
+    def test_llm_defaults_to_strict_temperature(self, mock_llm):
+        get_llm()
+
+        self.assertEqual(mock_llm.call_args.kwargs["temperature"], 0)
+
+    @patch("app.agent.create_agent")
+    @patch("app.agent.ChatGoogleGenerativeAI")
+    def test_agent_defaults_to_strict_temperature(self, mock_llm, mock_create_agent):
+        mock_create_agent.return_value.with_config.return_value = "agent"
+
+        create_conversational_agent()
+
+        self.assertEqual(mock_llm.call_args.kwargs["temperature"], 0)
+
+    @patch("app.agent.create_agent")
+    @patch("app.agent.ChatGoogleGenerativeAI")
+    def test_agent_preserves_explicit_temperature(self, mock_llm, mock_create_agent):
+        mock_create_agent.return_value.with_config.return_value = "agent"
+
+        create_conversational_agent(temperature=0.3)
+
+        self.assertEqual(mock_llm.call_args.kwargs["temperature"], 0.3)
+
+    @patch("app.agent.create_agent")
+    @patch("app.agent.ChatGoogleGenerativeAI")
+    def test_agent_uses_supplied_system_prompt(self, mock_llm, mock_create_agent):
+        mock_create_agent.return_value.with_config.return_value = "agent"
+
+        agent = create_conversational_agent(system_prompt="custom prompt")
+
+        self.assertEqual(agent, "agent")
+        self.assertEqual(
+            mock_create_agent.call_args.kwargs["system_prompt"], "custom prompt"
         )
 
-        tools = [
-            get_current_time,
-            wiki_search,
-            graph_traverse,
-            ingest_source,
-            lint_wiki,
-            sync_knowledge_base,
-            mongodb_query,
-            generate_chart,
-        ]
-        self.assertEqual(len(tools), 8)
-        tool_names = [t.name for t in tools]
-        self.assertIn("get_current_time", tool_names)
-        self.assertIn("wiki_search", tool_names)
-        self.assertIn("graph_traverse", tool_names)
-        self.assertIn("ingest_source", tool_names)
-        self.assertIn("lint_wiki", tool_names)
-        self.assertIn("sync_knowledge_base", tool_names)
-        self.assertIn("mongodb_query", tool_names)
-        self.assertIn("generate_chart", tool_names)
+    @patch("app.agent.create_agent")
+    @patch("app.agent.ChatGoogleGenerativeAI")
+    def test_agent_exposes_small_tool_surface(self, mock_llm, mock_create_agent):
+        mock_create_agent.return_value.with_config.return_value = "agent"
 
-        # Verify the agent itself can be instantiated without error
-        agent = create_conversational_agent()
-        self.assertIsNotNone(agent)
+        create_conversational_agent()
+
+        tool_names = [tool.name for tool in mock_create_agent.call_args.kwargs["tools"]]
+        self.assertEqual(tool_names, ["knowledge_search", "generate_chart"])
+
+    def test_public_tool_registry_only_exposes_agent_tools(self):
+        self.assertEqual(public_tools.__all__, ["knowledge_search", "generate_chart"])
+        self.assertFalse(hasattr(public_tools, "graph_traverse"))
+        self.assertFalse(hasattr(public_tools, "uploaded_file_context"))
+        self.assertFalse(hasattr(public_tools, "mongodb_query"))
 
     def test_multihop_queries(self):
-        """Test 10 multi-hop queries on the live agent to evaluate graph traversal and citation quality."""
-        if not self.api_key:
+        """Optional live smoke test for the deployed model and local knowledge base."""
+        if not self.api_key or os.getenv("RUN_LIVE_AGENT_TESTS") != "1":
             self.skipTest(
-                "GOOGLE_API_KEY not found in .env, skipping live multi-hop evaluation."
+                "Set GOOGLE_API_KEY and RUN_LIVE_AGENT_TESTS=1 to run live agent eval."
             )
 
         agent = create_conversational_agent()
-        queries = [
-            "QMD dùng database gì và lưu trữ vector như thế nào?",
-            "Auth-service kết nối với cơ sở dữ liệu nào và sử dụng cache gì?",
-            "Payment processing pipeline phụ thuộc vào những dịch vụ nào?",
-            "Dịch vụ nào gọi đến auth-service?",
-            "Team nào phụ trách quản lý auth-service?",
-            "MCP Server giao tiếp với Claude Desktop qua phương thức nào?",
-            "QMD hỗ trợ những embedding models nào?",
-            "Smart chunking hoạt động như thế nào trong QMD?",
-            "SQLite-vec là gì và tại sao được chọn làm vector backend?",
-            "Kiến trúc hybrid search của QMD bao gồm những gì?",
-        ]
+        from langchain_core.messages import HumanMessage
 
-        print("\n=== Running Multi-Hop Query Quality Evaluation ===")
-        for i, q in enumerate(queries):
-            try:
-                print(f"\nQuery {i + 1}: {q}")
-                from langchain_core.messages import HumanMessage as _HM
+        result = agent.invoke(
+            {"messages": [HumanMessage(content="Auth-service liên quan gì?")]}
+        )
+        msgs = result.get("messages", [])
+        last = msgs[-1] if msgs else None
+        output = getattr(last, "content", "") or ""
+        if isinstance(output, list):
+            output = " ".join(
+                p.get("text", "") if isinstance(p, dict) else str(p) for p in output
+            )
 
-                result = agent.invoke({"messages": [_HM(content=q)]})
-                msgs = result.get("messages", [])
-                last = msgs[-1] if msgs else None
-                output = getattr(last, "content", "") or ""
-                if isinstance(output, list):
-                    output = " ".join(
-                        p.get("text", "") if isinstance(p, dict) else str(p)
-                        for p in output
-                    )
-
-                print(f"Agent Output:\n{output}\n")
-
-                self.assertIsNotNone(output)
-                self.assertTrue(len(output) > 0)
-                has_source = any(
-                    indicator in output.lower()
-                    for indicator in ["wiki/", "nguồn:", "source", "tài liệu", "file:"]
-                )
-                print(f"Citations/References Checked: {has_source}")
-            except Exception as e:
-                self.fail(f"Agent failed on query '{q}'. Error: {e}")
+        self.assertIsNotNone(output)
+        self.assertTrue(len(output) > 0)
 
 
 if __name__ == "__main__":

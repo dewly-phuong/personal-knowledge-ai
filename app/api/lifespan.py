@@ -18,7 +18,7 @@ def scheduled_sync_and_lint() -> None:
     )
     try:
         from ingest import run_ingest_pipeline
-        from app.tools import lint_wiki
+        from app.tools.admin import lint_wiki
 
         run_ingest_pipeline(source="local", dir_path="raw/local")
         report = lint_wiki.invoke({})

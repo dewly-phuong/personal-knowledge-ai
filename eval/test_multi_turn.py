@@ -41,6 +41,7 @@ from deepeval.test_case.llm_test_case import ToolCall
 
 from eval.judge import GeminiJudge
 from eval.metric_capture import assert_test_with_metric_capture
+from eval.metric_selection import tool_correctness_enabled
 
 load_dotenv()
 
@@ -206,7 +207,7 @@ def test_multi_turn(record: dict[str, Any] | None, request: pytest.FixtureReques
         metrics = [_answer_relevancy]
         if turn_case.retrieval_context:
             metrics.append(_faithfulness)
-        if turn_case.expected_tools:
+        if tool_correctness_enabled() and turn_case.expected_tools:
             metrics.append(_tool_correctness)
         assert_test_with_metric_capture(
             request=request,

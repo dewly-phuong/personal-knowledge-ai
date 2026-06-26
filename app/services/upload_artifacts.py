@@ -1,16 +1,21 @@
 """
 Upload artifact processing and context retrieval.
 
-process_upload   — process one file (table or document) and persist to MongoDB
+process_upload   — process one file and persist session-scoped artifacts to MongoDB
 get_*            — query helpers
-build_session_upload_context — format context string for the agent
-search_artifact_text         — keyword-ranked text search within an artifact
+build_session_upload_context — format bounded context for the agent
+search_artifact_text         — chunk-ranked text search within an artifact
 """
 
+import json
 from pathlib import Path
 from typing import Any
 
-from app.services._upload_utils import MAX_CONTEXT_CHARS, text_snippets
+from app.services._upload_utils import (
+    MAX_CONTEXT_CHARS,
+    rank_text_chunks,
+    text_snippets,
+)
 from app.services.upload_processing import process_upload
 from app.services.upload_store import get_db
 
@@ -78,12 +83,7 @@ def build_session_upload_context(
     ]
     budget = max_chars
     for artifact in artifacts:
-        header = (
-            f"\n\n## Upload {artifact['upload_id']}: {artifact['original_filename']}\n"
-            f"- Kind: {artifact.get('kind')}\n"
-            f"- Description: {artifact.get('description')}\n"
-            f"- Processed path: {artifact.get('processed_path')}\n\n"
-        )
+        header = _artifact_header(artifact)
         preview = (
             search_artifact_text(artifact, query=query)
             if query
@@ -100,6 +100,13 @@ def build_session_upload_context(
 
 
 def search_artifact_text(artifact: dict[str, Any], query: str = "") -> str:
+    chunks = _load_chunks(artifact)
+    if chunks:
+        ranked = rank_text_chunks(chunks, query=query, limit=6)
+        return "\n\n---\n\n".join(
+            f"[chunk {chunk.get('index')}]\n{chunk.get('text', '')}" for chunk in ranked
+        )
+
     texts = []
     processed_path = artifact.get("processed_path")
     if processed_path and Path(processed_path).exists():
@@ -116,3 +123,35 @@ def search_artifact_text(artifact: dict[str, Any], query: str = "") -> str:
     combined = "\n\n".join(texts) or artifact.get("preview", "")
     snippets = text_snippets(combined, query=query, limit=6)
     return "\n\n---\n\n".join(snippets)
+
+
+def _artifact_header(artifact: dict[str, Any]) -> str:
+    lines = [
+        f"\n\n## Upload {artifact['upload_id']}: {artifact['original_filename']}",
+        f"- Kind: {artifact.get('kind')}",
+        f"- Description: {artifact.get('description')}",
+        f"- Processed path: {artifact.get('processed_path')}",
+        f"- Retrieval mode: {artifact.get('retrieval_mode', 'full_preview')}",
+        f"- Chunks: {artifact.get('chunk_count', 0)}",
+        f"- Context chars: {artifact.get('context_char_count', len(artifact.get('preview', '')))}",
+    ]
+    limitations = artifact.get("limitations") or []
+    if limitations:
+        lines.append("- Limitations: " + "; ".join(str(item) for item in limitations))
+    return "\n".join(lines) + "\n\n"
+
+
+def _load_chunks(artifact: dict[str, Any]) -> list[dict[str, Any]]:
+    chunks_path = artifact.get("chunks_path")
+    if not chunks_path:
+        return []
+    path = Path(chunks_path)
+    if not path.exists():
+        return []
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return []
+    if not isinstance(data, list):
+        return []
+    return [item for item in data if isinstance(item, dict)]

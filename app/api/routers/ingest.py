@@ -13,7 +13,7 @@ router = APIRouter(prefix="/api/ingest", tags=["ingest"])
 @router.post("")
 async def trigger_ingest(body: IngestRequest):
     """Triggers background document ingestion and returns a task ID."""
-    from app.tools import ingest_source
+    from app.tools.ingest import ingest_source
 
     loop = asyncio.get_running_loop()
     res = await loop.run_in_executor(

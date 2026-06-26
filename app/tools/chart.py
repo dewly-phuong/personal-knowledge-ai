@@ -20,7 +20,7 @@ def generate_chart(
     Render a visual chart (pie, bar, or line) directly in the chat.
 
     USE WHEN: user explicitly asks for a chart, graph, or visualization.
-    ALWAYS call mongodb_query or wiki_search FIRST to retrieve and aggregate data, then call this.
+    ALWAYS call knowledge_search FIRST to retrieve and aggregate data, then call this.
     NEVER pass column names or field references — pass computed label strings and numeric values directly.
 
     Args:

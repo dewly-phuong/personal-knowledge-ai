@@ -25,7 +25,7 @@ An internal knowledge-graph-powered AI assistant for Vietnamese-language enterpr
                          │ main.py (FastAPI + LangChain agent)
 ┌────────────────────────▼────────────────────────────────────┐
 │  Layer 3 — Agent & UI                                        │
-│  • Gemini 2.5 Pro agent with 8 tools                        │
+│  • Gemini 2.5 Pro agent with universal knowledge search     │
 │  • Real-time SSE streaming via FastAPI                      │
 │  • Chainlit chat UI  →  /chat                               │
 │  • Redis: session cache · cost stats · ingest task status   │
@@ -41,7 +41,8 @@ An internal knowledge-graph-powered AI assistant for Vietnamese-language enterpr
 | `app.py` | Chainlit event handlers and UI streaming |
 | `ingest.py` | Ingestion CLI and pipeline orchestration |
 | `app/agent.py` | LangChain agent factory (Gemini + tools) |
-| `app/tools.py` | 8 LangChain tools — wiki search, graph traverse, MongoDB query, charts… |
+| `app/tools/` | LangChain tools — universal knowledge search, diagnostic tools, charts… |
+| `app/retrieval/` | Source registry and adapters for wiki, graph, MongoDB, uploads, and future sources |
 | `app/services/wiki_search.py` | `WikiSearchService` — BM25 + Qdrant hybrid search |
 | `app/services/cost_tracker.py` | `CostTracker` — per-call cost accounting in Redis |
 | `app/services/graph_store.py` | `GraphStore` singleton wrapping NetworkX `MultiDiGraph` |
@@ -134,14 +135,10 @@ A daily background job automatically re-runs local ingestion and a wiki health a
 
 | Tool | When to use |
 |---|---|
-| `uploaded_file_context` | Retrieve processed context from files uploaded in the current Chainlit chat |
-| `wiki_search` | Policy docs, procedures, compiled wiki pages (BM25 + Qdrant hybrid) |
-| `graph_traverse` | Service dependencies, ownership, pipeline flows (2-hop graph) |
-| `mongodb_query` | Exact company data — employees, payroll, KPIs, bugs, revenue… |
+| `knowledge_search` | Searches every configured knowledge source in parallel and returns normalized per-source `ok` / `empty` / `error` results |
 | `generate_chart` | Render pie/bar/line charts from aggregated data |
-| `ingest_source` | Trigger background ingestion for a source |
-| `sync_knowledge_base` | Manually refresh the local knowledge base |
-| `lint_wiki` | Audit wiki for orphans, conflicts, broken links |
+
+Diagnostic and maintenance tools such as `graph_traverse`, `mongodb_query`, `ingest_source`, `sync_knowledge_base`, and `lint_wiki` remain exported for tests, manual debugging, and API helpers, but the active chat agent routes factual retrieval through `knowledge_search`.
 
 ---
 
@@ -169,11 +166,14 @@ Files uploaded in Chainlit are processed only for the active chat session:
 
 - CSV/XLSX/XLSM files are parsed with Pandas, summarized to Markdown, and exported to `csv/*.csv`.
 - Other files are converted to Markdown with MarkItDown when needed.
+- Processed Markdown is split into overlapping session chunks and stored as `chunks.json` beside the artifact.
+- When a user asks about an upload, the `uploads` source ranks matching chunks for the query before adding bounded context to `knowledge_search`.
 - Processed files are stored under `uploads/sessions/{session_id}/{upload_id}`.
-- Metadata is saved in MongoDB collection `uploaded_artifacts`, including schema/sample rows, description, and processed paths.
-- The agent uses `uploaded_file_context` to answer questions from files in the active chat session.
+- Metadata is saved in MongoDB collection `uploaded_artifacts`, including schema/sample rows, descriptions, processed paths, chunk counts, retrieval mode, and context character counts.
+- The agent searches uploaded file context through the `uploads` source inside `knowledge_search`.
 - Re-uploading the same file in one session reuses the existing processed artifact by SHA-256 hash instead of converting it again.
-- Uploaded files are searchable through `uploaded_file_context`; they are not ingested into the permanent wiki, graph, vector store, or MongoDB knowledge collections.
+- Uploaded files are searchable through the upload retrieval source; they are not ingested into the permanent wiki, graph, vector store, or MongoDB knowledge collections.
+- Image uploads currently retain metadata only. They are not OCRed, rendered into PDF page images, or sent to the LLM as multimodal image bytes in this flow.
 
 Debug flow:
 

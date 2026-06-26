@@ -21,7 +21,7 @@ DEFAULT_RESULT_DIR = Path(__file__).parent / "result"
 DEFAULT_REPORTS_DIR = Path(__file__).parent / "reports"
 DEFAULT_RULES = Path(__file__).parent / "configs" / "release-gates.yaml"
 CODE_BASED_PYTEST_ARGS = [
-    "eval/test_parallel_function_calling.py",
+    "eval/test_universal_knowledge_search.py",
 ]
 LLM_JUDGE_PYTEST_ARGS = [
     "eval/test_single_turn.py",
@@ -46,7 +46,9 @@ def _build_parser() -> argparse.ArgumentParser:
     _add_dataset_args(build)
 
     validate = subparsers.add_parser("validate-dataset")
-    validate.add_argument("--manifest", default=str(DEFAULT_DATASETS_DIR / MANIFEST_FILE))
+    validate.add_argument(
+        "--manifest", default=str(DEFAULT_DATASETS_DIR / MANIFEST_FILE)
+    )
 
     sync = subparsers.add_parser("sync-adapters")
     _add_dataset_args(sync)
@@ -199,7 +201,9 @@ def _pytest_phases(pytest_args: list[str]) -> list[list[str]]:
 
 def _manifest_path(datasets_dir: Path, value: str) -> Path:
     path = Path(value)
-    return path if path.is_absolute() or path.parent != Path(".") else datasets_dir / path
+    return (
+        path if path.is_absolute() or path.parent != Path(".") else datasets_dir / path
+    )
 
 
 def _print_errors(title: str, errors: list[str]) -> None:

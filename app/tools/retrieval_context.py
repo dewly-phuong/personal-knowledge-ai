@@ -15,6 +15,9 @@ _retrieval_accumulator: contextvars.ContextVar[list | None] = contextvars.Contex
 _current_upload_session: contextvars.ContextVar[str | None] = contextvars.ContextVar(
     "current_upload_session", default=None
 )
+_current_upload_ids: contextvars.ContextVar[list[str] | None] = contextvars.ContextVar(
+    "current_upload_ids", default=None
+)
 
 
 def start_retrieval_capture() -> None:
@@ -39,6 +42,18 @@ def set_current_upload_session(session_id: str | None, token=None):
 
 def get_current_upload_session() -> str | None:
     return _current_upload_session.get()
+
+
+def set_current_upload_ids(upload_ids: list[str] | None, token=None):
+    """Set/reset upload ids used by retrieval sources during one agent run."""
+    if token is not None:
+        _current_upload_ids.reset(token)
+        return None
+    return _current_upload_ids.set(upload_ids)
+
+
+def get_current_upload_ids() -> list[str] | None:
+    return _current_upload_ids.get()
 
 
 def register_retrieval(chunks: List[str]) -> None:

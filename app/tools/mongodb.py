@@ -25,6 +25,39 @@ def _get_mongo_db():
     return _mongo_client["personal_knowledge_ai"]
 
 
+def _run_mongo_query(
+    collection: str,
+    filter_json: str = "",
+    projection_json: str = "",
+    limit: int = 100,
+) -> str:
+    """Core MongoDB query logic — usable by both the tool and knowledge_search."""
+    limit = min(max(1, limit), 1000)
+    try:
+        db = _get_mongo_db()
+
+        allowed = db.list_collection_names()
+        if collection not in allowed:
+            return f"Error: Collection '{collection}' is invalid. Allowed collections: {', '.join(allowed)}."
+
+        query_dict = json.loads(filter_json) if filter_json else {}
+        proj_dict = json.loads(projection_json) if projection_json else None
+        results = list(db[collection].find(query_dict, proj_dict).limit(limit))
+
+        for r in results:
+            if "_id" in r:
+                r["_id"] = str(r["_id"])
+
+        if not results:
+            return f"No records found in collection '{collection}' matching query: {filter_json}"
+        return json.dumps(results, ensure_ascii=False, indent=2)
+
+    except json.JSONDecodeError as je:
+        return f"JSON Syntax Error: Ensure filter_json and projection_json are valid JSON strings. Details: {je}"
+    except Exception as e:
+        return f"Error querying MongoDB: {e}"
+
+
 @tool
 def mongodb_query(
     collection: str, filter_json: str, projection_json: str = None, limit: int = 100
@@ -32,11 +65,15 @@ def mongodb_query(
     """
     Query structured company data from MongoDB.
 
+    NOTE: Prefer using `knowledge_search` instead, which combines wiki, graph, AND MongoDB
+    in a single call. Use this tool directly only when you need a standalone MongoDB query
+    without any wiki/graph context.
+
     USE WHEN: any question requiring exact numbers, records, or statistics.
     Topics: employees, headcount, salary/payroll, attendance, KPIs, OKRs, revenue, costs,
             projects, bug tracking, sprint tickets, CRM customers, AI model registry, infrastructure costs.
 
-    DO NOT USE for qualitative explanations of how things work — use wiki_search or entity_search instead.
+    DO NOT USE for qualitative explanations of how things work — use knowledge_search instead.
     filter_json should use regular MongoDB query syntax. example: '{"status": {"$regex": "Muon", "$options": "i}}' to find late employees.
 
     Available Collections & Schemas:
@@ -138,27 +175,9 @@ def mongodb_query(
         projection_json (str, optional): JSON string for field projection. Use {"_id": 0} to hide IDs.
         limit (int, optional): Max documents to return. Defaults to 100. Max is 1000.
     """
-    limit = min(max(1, limit), 1000)
-    try:
-        db = _get_mongo_db()
-
-        allowed = db.list_collection_names()
-        if collection not in allowed:
-            return f"Error: Collection '{collection}' is invalid. Allowed collections: {', '.join(allowed)}."
-
-        query_dict = json.loads(filter_json) if filter_json else {}
-        proj_dict = json.loads(projection_json) if projection_json else None
-        results = list(db[collection].find(query_dict, proj_dict).limit(limit))
-
-        for r in results:
-            if "_id" in r:
-                r["_id"] = str(r["_id"])
-
-        if not results:
-            return f"No records found in collection '{collection}' matching query: {filter_json}"
-        return json.dumps(results, ensure_ascii=False, indent=2)
-
-    except json.JSONDecodeError as je:
-        return f"JSON Syntax Error: Ensure filter_json and projection_json are valid JSON strings. Details: {je}"
-    except Exception as e:
-        return f"Error querying MongoDB: {e}"
+    return _run_mongo_query(
+        collection=collection,
+        filter_json=filter_json or "",
+        projection_json=projection_json or "",
+        limit=limit,
+    )

@@ -174,7 +174,10 @@ def chunk_docs(chunk_size: int = 1200) -> tuple[list[list[str]], list[str]]:
 
 def make_agent_callback():
     from app.agent import create_conversational_agent
-    from app.tools import pop_retrieval_capture, start_retrieval_capture
+    from app.tools.retrieval_context import (
+        pop_retrieval_capture,
+        start_retrieval_capture,
+    )
     from deepeval.test_case import Turn
 
     agent = create_conversational_agent()

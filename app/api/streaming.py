@@ -9,7 +9,10 @@ from app.memory.history_manager import HistoryManager
 from app.prompt_store import get_active_prompt
 from app.services.cost_tracker import CostTracker
 from app.services.upload_artifacts import build_session_upload_context
-from app.tools import set_current_upload_session
+from app.tools.retrieval_context import (
+    set_current_upload_ids,
+    set_current_upload_session,
+)
 
 _cost_tracker = CostTracker()
 
@@ -26,7 +29,7 @@ async def chat_generator(
     """
     chat_history = await history_manager.get_context(session_id)
     active_prompt = await get_active_prompt()
-    agent = create_conversational_agent(temperature=1.0, system_prompt=active_prompt)
+    agent = create_conversational_agent(system_prompt=active_prompt)
     upload_context = build_session_upload_context(session_id, upload_ids=upload_ids)
     upload_messages = [SystemMessage(content=upload_context)] if upload_context else []
     input_messages = (
@@ -40,6 +43,7 @@ async def chat_generator(
 
     langfuse_handler = CallbackHandler(trace_context={"session_id": session_id})
     session_token = set_current_upload_session(session_id)
+    upload_ids_token = set_current_upload_ids(upload_ids)
     try:
         async for event in agent.astream_events(
             {"messages": input_messages},
@@ -122,6 +126,7 @@ async def chat_generator(
     except Exception as e:
         yield f"data: {json.dumps({'type': 'error', 'error': str(e)})}\n\n"
     finally:
+        set_current_upload_ids(None, token=upload_ids_token)
         set_current_upload_session(None, token=session_token)
 
     cost = _cost_tracker.add(total_input, total_output)

@@ -11,6 +11,8 @@ from typing import Any
 
 MAX_CONTEXT_CHARS = 12000
 MAX_SNIPPET_CHARS = 900
+DEFAULT_CHUNK_CHARS = 2000
+DEFAULT_CHUNK_OVERLAP_CHARS = 250
 
 
 def now() -> str:
@@ -67,6 +69,73 @@ def text_snippets(text: str, query: str, limit: int = 5) -> list[str]:
         if len(snippets) >= limit:
             break
     return snippets or ([text[:MAX_SNIPPET_CHARS]] if text else [])
+
+
+def chunk_text(
+    text: str,
+    target_chars: int = DEFAULT_CHUNK_CHARS,
+    overlap_chars: int = DEFAULT_CHUNK_OVERLAP_CHARS,
+) -> list[dict[str, Any]]:
+    if target_chars <= 0:
+        raise ValueError("target_chars must be positive")
+    if overlap_chars < 0 or overlap_chars >= target_chars:
+        raise ValueError(
+            "overlap_chars must be non-negative and smaller than target_chars"
+        )
+
+    content = text or ""
+    if not content:
+        return []
+
+    chunks: list[dict[str, Any]] = []
+    step = target_chars - overlap_chars
+    start = 0
+    while start < len(content):
+        end = min(len(content), start + target_chars)
+        chunk = content[start:end]
+        chunks.append(
+            {
+                "index": len(chunks),
+                "start_char": start,
+                "end_char": end,
+                "char_count": len(chunk),
+                "text": chunk,
+            }
+        )
+        if end >= len(content):
+            break
+        start += step
+    return chunks
+
+
+def rank_text_chunks(
+    chunks: list[dict[str, Any]],
+    query: str,
+    limit: int = 6,
+) -> list[dict[str, Any]]:
+    if not chunks:
+        return []
+
+    terms = [
+        term.lower()
+        for term in re.findall(r"[\w\-À-ỹ]+", query or "")
+        if len(term) >= 2
+    ]
+    if not terms:
+        return chunks[:limit]
+
+    scored: list[tuple[int, int, dict[str, Any]]] = []
+    for chunk in chunks:
+        text = str(chunk.get("text", "")).lower()
+        score = sum(text.count(term) for term in terms)
+        if score:
+            scored.append((score, int(chunk.get("index", 0)), chunk))
+
+    if not scored:
+        return chunks[:limit]
+
+    scored.sort(key=lambda item: (-item[0], item[1]))
+    return [chunk for _, _, chunk in scored[:limit]]
 
 
 def jsonable(value: Any) -> Any:

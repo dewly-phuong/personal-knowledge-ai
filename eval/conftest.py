@@ -154,7 +154,19 @@ def _build_trace_entry(score_entry: dict, trace_payload: dict) -> dict:
     }
     entry["failure_modes"] = classify_failure_modes(entry)
     entry["diagnosis"] = [item["detail"] for item in entry["failure_modes"]]
-    return entry
+    return _json_safe(entry)
+
+
+def _json_safe(value: Any) -> Any:
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    if isinstance(value, dict):
+        return {str(key): _json_safe(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple, set)):
+        return [_json_safe(item) for item in value]
+    if hasattr(value, "name"):
+        return {"name": _json_safe(getattr(value, "name"))}
+    return str(value)
 
 
 def _write_trace_entry(entry: dict) -> None:
@@ -260,9 +272,7 @@ def pytest_runtest_logreport(report):
                     "score": 1.0 if parallel_passed else 0.0,
                     "threshold": 1.0,
                     "passed": parallel_passed,
-                    "reason": (
-                        f"Actual tool batches: {val.get('actual_batches', [])}"
-                    ),
+                    "reason": (f"Actual tool batches: {val.get('actual_batches', [])}"),
                     "error": "",
                 }
             )

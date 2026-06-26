@@ -1,49 +1,29 @@
 """
-Knowledge-base search tools: wiki_search, entity_search, graph_traverse,
+Knowledge-base search tools: knowledge_search (unified), graph_traverse,
 uploaded_file_context.
 """
 
+import asyncio
+import json
+import math
+from typing import Any
+
 from langchain_core.tools import tool
 
-from app.services.wiki_search import WikiSearchService
+from app.retrieval.contracts import SearchContext
+from app.retrieval.sources import build_default_registry
 from app.services.graph_store import GraphStore
-from app.tools.retrieval_context import register_retrieval, get_current_upload_session
-
-_wiki = WikiSearchService()
-
-
-@tool
-def wiki_search(query: str) -> str:
-    """
-    Hybrid BM25 + vector search over compiled wiki pages.
-
-    USE WHEN: general questions about policy, process, or concepts with NO specific named entity.
-    Examples: "How does the leave approval process work?", "What is the deployment policy?"
-
-    DO NOT USE when a specific named entity is involved — use entity_search instead.
-    DO NOT USE for exact numbers or statistics — use mongodb_query instead.
-
-    Returns the top 5 relevant snippets with their file paths.
-    """
-    result = _wiki.search(query)
-    chunks = [c.strip() for c in result.split("\n\n") if c.strip()]
-    register_retrieval(chunks)
-    return result
+from app.tools.retrieval_context import (
+    get_current_upload_ids,
+    get_current_upload_session,
+    register_retrieval,
+)
 
 
-@tool
-def entity_search(entity_name: str, query: str) -> str:
-    """
-    Combined lookup for a SPECIFIC NAMED ENTITY (service, project, person, pipeline, team, system).
-    Performs graph relationship extraction + wiki search in one call for higher recall.
+def _graph_lookup(entity_name: str, query: str):
+    """Internal helper: graph traversal + fuzzy matching for a named entity.
 
-    USE WHEN: the question names a specific internal entity.
-    Examples: "What does AuthService do?", "Who owns DataPipeline?", "Tell me about project X."
-
-    DO NOT USE for general questions without a specific named entity — use wiki_search instead.
-    DO NOT USE for exact numbers or statistics — use mongodb_query instead.
-
-    Returns a graph relationship summary followed by relevant wiki snippets.
+    Returns (graph_context_str, expanded_query_str, node_descriptions_list).
     """
     store = GraphStore()
     subg_1hop = store.get_subgraph(entity_name, hops=1)
@@ -78,6 +58,7 @@ def entity_search(entity_name: str, query: str) -> str:
             subg_1hop = store.get_subgraph(canonical, hops=1)
             subg_2hop = store.get_subgraph(canonical, hops=2)
 
+    node_descriptions = []
     if subg_1hop and subg_1hop["nodes"]:
         edge_lines = [
             f"{e['source']} --[{e['predicate']}]--> {e['target']}"
@@ -86,15 +67,65 @@ def entity_search(entity_name: str, query: str) -> str:
         graph_context = f"Relations for '{canonical}': " + (
             " | ".join(edge_lines) if edge_lines else "no direct relations"
         )
+        # Node details from 2-hop subgraph
+        node_descriptions = [
+            f"- {n['id']} [{n['type']}]{' (' + n['description'] + ')' if n.get('description') else ''}"
+            for n in subg_2hop["nodes"]
+        ]
         neighbor_names = [n["id"] for n in subg_2hop["nodes"] if n["id"] != canonical]
         expanded_query = f"{query} {canonical} {' '.join(neighbor_names[:10])}"
     else:
         graph_context = f"'{entity_name}' not found in knowledge graph."
         expanded_query = f"{query} {entity_name}"
 
-    search_results = _wiki.search(expanded_query)
-    register_retrieval([graph_context, search_results])
-    return f"[Graph] {graph_context}\n\n[Wiki]\n{search_results}"
+    return graph_context, expanded_query, node_descriptions
+
+
+@tool
+def knowledge_search(
+    query: str,
+    limit: int = 100,
+    timeout_seconds: float = 8.0,
+) -> str:
+    """
+    Search every configured knowledge source in parallel and return one normalized result per source.
+
+    Always use this before answering factual or internal-company questions. Sources with no data
+    are returned with status="empty" and data=null. Sources that fail are returned with
+    status="error" and data=null.
+    """
+    context = SearchContext(
+        session_id=get_current_upload_session(),
+        upload_ids=get_current_upload_ids(),
+        limit=limit,
+        timeout_seconds=timeout_seconds,
+    )
+    bundle = _run_registry_search(query, context)
+    payload = _sanitize_json_value(bundle.to_dict())
+    serialized = json.dumps(payload, ensure_ascii=False, indent=2)
+    register_retrieval([json.dumps(payload, ensure_ascii=False)])
+    return serialized
+
+
+def _run_registry_search(query: str, context: SearchContext):
+    registry = build_default_registry()
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return asyncio.run(registry.search_all(query, context))
+    raise RuntimeError(
+        "knowledge_search cannot be invoked synchronously inside an active event loop"
+    )
+
+
+def _sanitize_json_value(value: Any) -> Any:
+    if isinstance(value, float) and not math.isfinite(value):
+        return None
+    if isinstance(value, dict):
+        return {key: _sanitize_json_value(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_sanitize_json_value(item) for item in value]
+    return value
 
 
 @tool
@@ -103,7 +134,7 @@ def graph_traverse(entity_name: str) -> str:
     Retrieve relationships for a given entity from the knowledge graph up to 2 hops.
     Use this to traverse the dependencies, pipeline flows, or ownership of services/components.
     Always call this tool first when investigating a specific entity, service, pipeline, project, or object,
-    before using `wiki_search` to find detailed documentation.
+    before using `knowledge_search` to find detailed documentation.
     Returns entity details and serialized triples in the format (A) --[predicate]--> (B).
     """
     store = GraphStore()

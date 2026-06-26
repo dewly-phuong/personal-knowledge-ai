@@ -35,6 +35,7 @@ from deepeval.test_case.llm_test_case import ToolCall
 
 from eval.judge import GeminiJudge
 from eval.metric_capture import assert_test_with_metric_capture
+from eval.metric_selection import tool_correctness_enabled
 
 load_dotenv()
 
@@ -65,7 +66,9 @@ _domain_faithfulness = GEval(
     threshold=0.7,
 )
 
-_conv_retention = KnowledgeRetentionMetric(threshold=0.5, model=_judge, async_mode=False)
+_conv_retention = KnowledgeRetentionMetric(
+    threshold=0.5, model=_judge, async_mode=False
+)
 _conv_geval = ConversationalGEval(
     name="UnifiedConversationFaithfulness",
     model=_judge,
@@ -159,7 +162,10 @@ def _run_agent_conversation(
     record: dict[str, Any],
 ) -> tuple[list[Turn], list[dict[str, Any]]]:
     from app.agent import create_conversational_agent
-    from app.tools import pop_retrieval_capture, start_retrieval_capture
+    from app.tools.retrieval_context import (
+        pop_retrieval_capture,
+        start_retrieval_capture,
+    )
 
     agent = create_conversational_agent()
     messages: list[dict[str, str]] = []
@@ -204,9 +210,7 @@ def _run_agent_conversation(
 
 
 def _expected_assistant_turns(record: dict[str, Any]) -> list[dict[str, Any]]:
-    return [
-        turn for turn in record.get("turns", []) if turn.get("role") == "assistant"
-    ]
+    return [turn for turn in record.get("turns", []) if turn.get("role") == "assistant"]
 
 
 def _metric_snapshot(metrics: list[Any]) -> list[dict[str, Any]]:
@@ -275,7 +279,9 @@ def _record_conversation_summary(
     if _records
     else ["skip"],
 )
-def test_conversation_dataset(record: dict[str, Any] | None, request: pytest.FixtureRequest):
+def test_conversation_dataset(
+    record: dict[str, Any] | None, request: pytest.FixtureRequest
+):
     if _skip_reason or record is None:
         pytest.skip(_skip_reason or "no records")
 
@@ -289,14 +295,18 @@ def test_conversation_dataset(record: dict[str, Any] | None, request: pytest.Fix
 
     for index, run in enumerate(runs):
         expected_turn = (
-            expected_assistant_turns[index] if index < len(expected_assistant_turns) else {}
+            expected_assistant_turns[index]
+            if index < len(expected_assistant_turns)
+            else {}
         )
         turn_retrieval = (
             run["retrieval_context"]
             or expected_turn.get("retrieval_context")
             or expected_retrieval
         )
-        expected_tools = run["expected_tools"] or _tool_calls(record.get("expected_tools"))
+        expected_tools = run["expected_tools"] or _tool_calls(
+            record.get("expected_tools")
+        )
 
         turn_case = LLMTestCase(
             input=run["input"],
@@ -317,7 +327,7 @@ def test_conversation_dataset(record: dict[str, Any] | None, request: pytest.Fix
         turn_metrics = [_answer_relevancy, _domain_faithfulness]
         if turn_retrieval:
             turn_metrics.append(_faithfulness)
-        if expected_tools:
+        if tool_correctness_enabled() and expected_tools:
             turn_metrics.append(_tool_correctness)
 
         assert_test_with_metric_capture(

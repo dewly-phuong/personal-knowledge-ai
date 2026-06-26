@@ -1,7 +1,11 @@
 from pathlib import Path
 
 from app.services._upload_utils import frame_summary, read_text_or_markitdown, slug
-from app.services.upload_markdown import document_markdown, image_markdown, table_markdown
+from app.services.upload_markdown import (
+    document_markdown,
+    image_markdown,
+    table_markdown,
+)
 
 TABLE_EXTENSIONS = {".csv", ".xlsx", ".xls", ".xlsm"}
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp", ".tiff", ".tif"}
@@ -71,7 +75,13 @@ def process_image(original_path: Path, filename: str, artifact_dir: Path):
     processed_path.write_text(content, encoding="utf-8")
     return (
         content,
-        {"processed_path": str(processed_path), "processor": "image-metadata"},
+        {
+            "processed_path": str(processed_path),
+            "processor": "image-metadata",
+            "limitations": [
+                "Visual content is not extracted yet; this artifact only contains image metadata."
+            ],
+        },
         "image",
         f"Uploaded image `{filename}` retained as session context.",
     )

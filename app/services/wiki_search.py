@@ -66,7 +66,7 @@ class WikiSearchService:
                         except Exception:
                             pass
         try:
-            r.setex(_CACHE_KEY, _CACHE_TTL, json.dumps(docs))
+            r.set(_CACHE_KEY, json.dumps(docs), ex=_CACHE_TTL)
         except Exception as e:
             logger.warning("WikiSearchService: Redis write failed: %s", e)
         return docs

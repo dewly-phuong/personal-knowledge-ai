@@ -15,7 +15,13 @@ def test_build_dataset_writes_manifest_from_existing_adapters(tmp_path):
     )
 
     exit_code = pipeline.main(
-        ["build-dataset", "--datasets-dir", str(datasets), "--manifest", "eval_suite.json"]
+        [
+            "build-dataset",
+            "--datasets-dir",
+            str(datasets),
+            "--manifest",
+            "eval_suite.json",
+        ]
     )
 
     assert exit_code == 0
@@ -26,7 +32,9 @@ def test_build_dataset_writes_manifest_from_existing_adapters(tmp_path):
 def test_validate_dataset_returns_nonzero_for_invalid_manifest(tmp_path):
     manifest = tmp_path / "eval_suite.json"
     manifest.write_text(
-        json.dumps([{"id": "ST001", "suite": "single_turn", "payload": {"input": "Q"}}]),
+        json.dumps(
+            [{"id": "ST001", "suite": "single_turn", "payload": {"input": "Q"}}]
+        ),
         encoding="utf-8",
     )
 
@@ -158,7 +166,7 @@ def test_run_pipeline_defaults_to_code_based_eval_first(monkeypatch, tmp_path):
     pytest_calls = [call for call in calls if "pytest" in call]
     assert len(pytest_calls) == 2
     suite_args = [item for item in pytest_calls[0] if item.startswith("eval/test_")]
-    assert suite_args[0] == "eval/test_parallel_function_calling.py"
+    assert suite_args[0] == "eval/test_universal_knowledge_search.py"
     llm_suite_args = [item for item in pytest_calls[1] if item.startswith("eval/test_")]
     assert llm_suite_args == [
         "eval/test_single_turn.py",
@@ -201,7 +209,7 @@ def test_run_pipeline_stops_before_llm_eval_when_code_based_eval_fails(
 
     def fake_run(cmd, check=False):
         calls.append(cmd)
-        if "eval/test_parallel_function_calling.py" in cmd:
+        if "eval/test_universal_knowledge_search.py" in cmd:
             return subprocess.CompletedProcess(cmd, 1)
         return subprocess.CompletedProcess(cmd, 0)
 
@@ -224,7 +232,7 @@ def test_run_pipeline_stops_before_llm_eval_when_code_based_eval_fails(
     assert exit_code == 1
     pytest_calls = [call for call in calls if "pytest" in call]
     assert len(pytest_calls) == 1
-    assert "eval/test_parallel_function_calling.py" in pytest_calls[0]
+    assert "eval/test_universal_knowledge_search.py" in pytest_calls[0]
     assert "eval/test_single_turn.py" not in pytest_calls[0]
     assert "eval/test_multi_turn.py" not in pytest_calls[0]
     assert "eval/test_conversation_dataset.py" not in pytest_calls[0]

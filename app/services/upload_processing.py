@@ -1,3 +1,4 @@
+import json
 import shutil
 import uuid
 from pathlib import Path
@@ -5,6 +6,7 @@ from typing import Any
 
 from app.services._upload_utils import (
     MAX_CONTEXT_CHARS,
+    chunk_text,
     file_hash,
     now,
     safe_name,
@@ -65,6 +67,7 @@ def process_upload(
                 "processed_path": extra.pop("processed_path"),
                 "description": description,
                 "preview": content[:MAX_CONTEXT_CHARS],
+                **_chunk_metadata(content, artifact_dir),
                 **extra,
             }
         )
@@ -136,4 +139,18 @@ def _base_artifact(
         "artifact_dir": str(artifact_dir),
         "source": "chainlit_upload",
         "duplicate_count": 0,
+    }
+
+
+def _chunk_metadata(content: str, artifact_dir: Path) -> dict[str, Any]:
+    chunks = chunk_text(content)
+    chunks_path = artifact_dir / "chunks.json"
+    chunks_path.write_text(
+        json.dumps(chunks, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+    return {
+        "chunks_path": str(chunks_path),
+        "chunk_count": len(chunks),
+        "context_char_count": len(content or ""),
+        "retrieval_mode": "chunk_search" if len(chunks) > 1 else "full_preview",
     }
